@@ -1165,6 +1165,12 @@ typedef struct BbCtrlParams {
     int gc_thres_pcent_high;
 } BbCtrlParams;
 
+typedef struct FDPCtrlParams {
+    uint16_t nrg;
+    uint16_t nruh;
+    uint64_t runs; // Bytes
+} FDPCtrlParams;
+
 typedef struct ZNSCtrlParams {
     uint8_t  zns_num_ch;
     uint8_t  zns_num_lun;
@@ -1338,6 +1344,7 @@ typedef struct FemuCtrl {
     int64_t chnl_pg_xfer_lat_ns;
 
     BbCtrlParams bb_params;
+    FDPCtrlParams fdp_params;
 
     struct ssd      *ssd;
     SsdDramBackend  *mbe;
@@ -1383,6 +1390,7 @@ enum {
     FEMU_ZNSSD_MODE = 3,
     FEMU_SMARTSSD_MODE,
     FEMU_KVSSD_MODE,
+    FEMU_FDP_MODE,
 };
 
 enum {
@@ -1413,6 +1421,11 @@ static inline bool NOSSD(FemuCtrl *n)
 static inline bool ZNSSD(FemuCtrl *n)
 {
     return (n->femu_mode == FEMU_ZNSSD_MODE);
+}
+
+static inline bool FDP(FemuCtrl *n)
+{
+    return (n->femu_mode == FEMU_FDP_MODE);
 }
 
 /* Basic NVMe Queue Pair operation APIs from nvme-util.c */
@@ -1474,6 +1487,7 @@ int nvme_register_ocssd20(FemuCtrl *n);
 int nvme_register_nossd(FemuCtrl *n);
 int nvme_register_bbssd(FemuCtrl *n);
 int nvme_register_znssd(FemuCtrl *n);
+int nvme_register_fdp(FemuCtrl *n);
 
 static inline uint64_t ns_blks(NvmeNamespace *ns, uint8_t lba_idx)
 {
