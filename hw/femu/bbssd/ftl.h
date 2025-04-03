@@ -156,8 +156,16 @@ struct ssdparams {
     int tt_luns;      /* total # of LUNs in the SSD */
 };
 
+struct fdp_ssdparams {
+    uint16_t nrg;
+    uint16_t nruh;
+    uint64_t runs;
+    uint16_t lines_per_ru; // rus / (blks_per_line * pgs_per_blk * secs_per_pg * secsz)
+};
+
 typedef struct line {
     int id;  /* line id, the same as corresponding block id */
+    int gid; /* line group id */
     int ipc; /* invalid page count in this line */
     int vpc; /* valid page count in this line */
     QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
@@ -173,6 +181,12 @@ struct write_pointer {
     int pg;
     int blk;
     int pl;
+};
+
+struct line_group {
+    int id;
+    struct write_pointer wp;
+    int count; // max: rus_per_line
 };
 
 struct line_mgmt {
@@ -197,6 +211,7 @@ struct nand_cmd {
 struct ssd {
     char *ssdname;
     struct ssdparams sp;
+    struct fdp_ssdparams fsp;
     struct ssd_channel *ch;
     struct ppa *maptbl; /* page level mapping table */
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */

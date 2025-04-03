@@ -282,8 +282,17 @@ static void ssd_init_params(struct ssdparams *spp, FemuCtrl *n)
     spp->gc_thres_lines_high = (int)((1 - spp->gc_thres_pcent_high) * spp->tt_lines);
     spp->enable_gc_delay = true;
 
-
     check_params(spp);
+}
+
+static void ssd_init_fdp_params(struct fdp_ssdparams *fspp, FemuCtrl *n)
+{
+    struct ssdparams *sp = &n->ssd->sp;
+    fspp->nrg = 1;
+    fspp->nruh = 2;
+    fspp->runs = 1024 * 1024 * 1024;
+    fspp->lines_per_ru = fspp->runs / (sp->blks_per_line * sp->pgs_per_blk * sp->secs_per_pg * sp->secsz);
+    ftl_log("ssd_init_params; lines_per_ru: %d\n", fspp->lines_per_ru);
 }
 
 static void ssd_init_nand_page(struct nand_page *pg, struct ssdparams *spp)
@@ -364,10 +373,12 @@ void ssd_init(FemuCtrl *n)
 {
     struct ssd *ssd = n->ssd;
     struct ssdparams *spp = &ssd->sp;
+    struct fdp_ssdparams *fspp = &ssd->fsp;
 
     ftl_assert(ssd);
 
     ssd_init_params(spp, n);
+    ssd_init_fdp_params(fspp, n);
 
     /* initialize ssd internal layout architecture */
     ssd->ch = g_malloc0(sizeof(struct ssd_channel) * spp->nchs);
@@ -807,17 +818,26 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 {
     uint64_t lba = req->slba;
     struct ssdparams *spp = &ssd->sp;
-    int len = req->nlb;
+    int nlb = req->nlb;
     uint64_t start_lpn = lba / spp->secs_per_pg;
-    uint64_t end_lpn = (lba + len - 1) / spp->secs_per_pg;
+    uint64_t end_lpn = (lba + nlb - 1) / spp->secs_per_pg;
     struct ppa ppa;
     uint64_t lpn;
     uint64_t curlat = 0, maxlat = 0;
     int r;
 
+    // NvmeNamespace *ns = req->ns;
+    NvmeRwCmd *rw = (NvmeRwCmd *)&req->cmd;
+    uint32_t dw12 = le32_to_cpu(req->cmd.cdw12);
+    uint8_t dtype = (dw12 >> 20) & 0xf;
+    uint16_t pid = le16_to_cpu((rw->dsmgmt >> 16) & 0xffff);
+    // uint16_t ph, rg, ruhid;
+
     if (end_lpn >= spp->tt_pgs) {
-        ftl_err("start_lpn=%"PRIu64",tt_pgs=%d\n", start_lpn, ssd->sp.tt_pgs);
+        ftl_err("start_lpn: %"PRIu64", tt_pgs: %d\n", start_lpn, ssd->sp.tt_pgs);
     }
+
+    ftl_log("dtype: %d, pid: %d\n", dtype, pid);
 
     while (should_gc_high(ssd)) {
         /* perform GC here until !should_gc(ssd) */
@@ -850,6 +870,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         swr.type = USER_IO;
         swr.cmd = NAND_WRITE;
         swr.stime = req->stime;
+
         /* get latency statistics */
         curlat = ssd_advance_status(ssd, &ppa, &swr);
         maxlat = (curlat > maxlat) ? curlat : maxlat;
