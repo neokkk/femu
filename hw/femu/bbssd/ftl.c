@@ -746,7 +746,7 @@ static int do_gc(struct ssd *ssd, bool force)
     }
 
     ppa.g.blk = victim_line->id;
-    ftl_debug("GC-ing line:%d,ipc=%d,victim=%d,full=%d,free=%d\n", ppa.g.blk,
+    printf("[FEMU] GC-ing...; line: %d, ipc: %d, victim: %d, full: %d, free: %d\n", ppa.g.blk,
               victim_line->ipc, ssd->lm.victim_line_cnt, ssd->lm.full_line_cnt,
               ssd->lm.free_line_cnt);
 
@@ -776,6 +776,43 @@ static int do_gc(struct ssd *ssd, bool force)
     mark_line_free(ssd, &ppa);
 
     return 0;
+}
+
+static bool update_ruh(NvmeNamespace *ns, uint16_t pid)
+{
+    NvmeEnduranceGroup *endgrp = ns->endgrp;
+    NvmeRuHandle *ruh;
+    NvmeReclaimUnit *ru;
+    // NvmeFdpEvent *e = NULL;
+    uint16_t ph, rg, ruhid;
+
+    if (!nvme_parse_pid(ns, pid, &ph, &rg)) {
+        return false;
+    }
+
+    ruhid = ns->fdp.phs[ph];
+
+    ruh = &endgrp->fdp.ruhs[ruhid];
+    ru = &ruh->rus[rg];
+
+    if (ru->ruamw) {
+        // if (log_event(ruh, FDP_EVT_RU_NOT_FULLY_WRITTEN)) {
+        //     e = nvme_fdp_alloc_event(n, &endgrp->fdp.host_events);
+        //     e->type = FDP_EVT_RU_NOT_FULLY_WRITTEN;
+        //     e->flags = FDPEF_PIV | FDPEF_NSIDV | FDPEF_LV;
+        //     e->pid = cpu_to_le16(pid);
+        //     e->nsid = cpu_to_le32(ns->params.nsid);
+        //     e->rgid = cpu_to_le16(rg);
+        //     e->ruhid = cpu_to_le16(ruhid);
+        // }
+
+        /* log (eventual) GC overhead of prematurely swapping the RU */
+        nvme_fdp_stat_inc(&endgrp->fdp.mbmw, nvme_l2b(ns, ru->ruamw));
+    }
+
+    ru->ruamw = ruh->ruamw;
+
+    return true;
 }
 
 static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
@@ -826,12 +863,14 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     uint64_t curlat = 0, maxlat = 0;
     int r;
 
-    // NvmeNamespace *ns = req->ns;
+    NvmeNamespace *ns = req->ns;
     NvmeRwCmd *rw = (NvmeRwCmd *)&req->cmd;
+    uint64_t data_size = nvme_l2b(ns, nlb);
     uint32_t dw12 = le32_to_cpu(req->cmd.cdw12);
     uint8_t dtype = (dw12 >> 20) & 0xf;
     uint16_t pid = le16_to_cpu((rw->dsmgmt >> 16) & 0xffff);
-    // uint16_t ph, rg, ruhid;
+    uint16_t ph, rg, ruhid;
+    NvmeReclaimUnit *ru;
 
     if (end_lpn >= spp->tt_pgs) {
         ftl_err("start_lpn: %"PRIu64", tt_pgs: %d\n", start_lpn, ssd->sp.tt_pgs);
@@ -844,6 +883,28 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         r = do_gc(ssd, true);
         if (r == -1)
             break;
+    }
+
+    if (dtype != NVME_DIRECTIVE_DATA_PLACEMENT ||
+        !nvme_parse_pid(ns, pid, &ph, &rg)) {
+        ph = 0;
+        rg = 0;
+    }
+
+    ruhid = ns->fdp.phs[ph];
+    ru = &ns->endgrp->fdp.ruhs[ruhid].rus[rg];
+
+    nvme_fdp_stat_inc(&ns->endgrp->fdp.hbmw, data_size);
+    nvme_fdp_stat_inc(&ns->endgrp->fdp.mbmw, data_size);    
+
+    while (nlb) {
+        if (nlb < ru->ruamw) {
+            ru->ruamw -= nlb;
+            break;
+        }
+
+        nlb -= ru->ruamw;
+        update_ruh(ns, pid);
     }
 
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
