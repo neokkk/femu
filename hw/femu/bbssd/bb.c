@@ -83,6 +83,10 @@ static uint16_t bb_io_cmd(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
     case NVME_CMD_READ:
     case NVME_CMD_WRITE:
         return bb_nvme_rw(n, ns, cmd, req);
+    // case NVME_CMD_IO_MGMT_RECV:
+    //     return bb_nvme_io_mgmt_recv(n, req);
+    // case NVME_CMD_IO_MGMT_SEND:
+    //     return bb_nvme_io_mgmt_send(n, req);
     default:
         return NVME_INVALID_OPCODE | NVME_DNR;
     }
