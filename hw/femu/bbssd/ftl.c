@@ -90,12 +90,18 @@ static inline void victim_line_set_pos(void *a, size_t pos)
 static void ssd_init_lines(struct ssd *ssd)
 {
     struct ssdparams *spp = &ssd->sp;
+    struct fdp_ssdparams *fspp = &ssd->fsp;
     struct line_mgmt *lm = &ssd->lm;
     struct line *line;
+    struct line_group *lg;
+    int i;
 
     lm->tt_lines = spp->blks_per_pl;
     ftl_assert(lm->tt_lines == spp->tt_lines);
     lm->lines = g_malloc0(sizeof(struct line) * lm->tt_lines);
+
+    lm->tt_lgs = lm->tt_lines / fspp->lines_per_ru;
+    lm->line_groups = g_malloc0(sizeof(struct line_group) * lm->tt_lgs);
 
     QTAILQ_INIT(&lm->free_line_list);
     lm->victim_line_pq = pqueue_init(spp->tt_lines, victim_line_cmp_pri,
@@ -103,12 +109,22 @@ static void ssd_init_lines(struct ssd *ssd)
             victim_line_get_pos, victim_line_set_pos);
     QTAILQ_INIT(&lm->full_line_list);
 
+    for (i = 0; i < lm->tt_lgs; i++) {
+        lg = &lm->line_groups[i];
+        lg->id = i;
+        lg->ipc = 0;
+        lg->vpc = 0;
+        lg->ru = NULL;
+    }
+
     lm->free_line_cnt = 0;
-    for (int i = 0; i < lm->tt_lines; i++) {
+    for (i = 0; i < lm->tt_lines; i++) {
+        int lgid = i / lm->tt_lgs;
         line = &lm->lines[i];
         line->id = i;
         line->ipc = 0;
         line->vpc = 0;
+        line->lg = &(lm->line_groups[lgid]);
         line->pos = 0;
         /* initialize all the lines as free lines */
         QTAILQ_INSERT_TAIL(&lm->free_line_list, line, entry);
@@ -561,6 +577,9 @@ static bool update_ruh(NvmeNamespace *ns, uint16_t pid)
     ruh = &endgrp->fdp.ruhs[ruhid];
     ru = &ruh->rus[rg];
 
+    //> nk: TODO
+    // set new RU
+
     if (ru->ruamw) {
         // if (log_event(ruh, FDP_EVT_RU_NOT_FULLY_WRITTEN)) {
         //     e = nvme_fdp_alloc_event(n, &endgrp->fdp.host_events);
@@ -618,6 +637,7 @@ static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
         pqueue_change_priority(lm->victim_line_pq, line->vpc - 1, line);
     } else {
         line->vpc--;
+        line->lg->vpc--;
     }
 
     if (was_full_line) {
@@ -649,6 +669,7 @@ static void mark_page_valid(struct ssd *ssd, struct ppa *ppa)
     line = get_line(ssd, ppa);
     ftl_assert(line->vpc >= 0 && line->vpc < ssd->sp.pgs_per_line);
     line->vpc++;
+    line->lg->vpc++;
 }
 
 static void mark_block_free(struct ssd *ssd, struct ppa *ppa)
@@ -802,6 +823,8 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
 {
     struct line_mgmt *lm = &ssd->lm;
     struct line *line = get_line(ssd, ppa);
+    line->lg->ipc -= line->ipc;
+    line->lg->vpc -= line->vpc;
     line->ipc = 0;
     line->vpc = 0;
     /* move this line to free line list */
@@ -849,47 +872,13 @@ static int do_gc(struct ssd *ssd, NvmeRequest *req, bool force)
         }
     }
 
+    //> nk: TODO
+    // ruamw -= blks_per_line
+
     /* update line status */
     mark_line_free(ssd, &ppa);
 
     return 0;
-}
-
-static bool update_ruh(NvmeNamespace *ns, uint16_t pid)
-{
-    NvmeEnduranceGroup *endgrp = ns->endgrp;
-    NvmeRuHandle *ruh;
-    NvmeReclaimUnit *ru;
-    // NvmeFdpEvent *e = NULL;
-    uint16_t ph, rg, ruhid;
-
-    if (!nvme_parse_pid(ns, pid, &ph, &rg)) {
-        return false;
-    }
-
-    ruhid = ns->fdp.phs[ph];
-
-    ruh = &endgrp->fdp.ruhs[ruhid];
-    ru = &ruh->rus[rg];
-
-    if (ru->ruamw) {
-        // if (log_event(ruh, FDP_EVT_RU_NOT_FULLY_WRITTEN)) {
-        //     e = nvme_fdp_alloc_event(n, &endgrp->fdp.host_events);
-        //     e->type = FDP_EVT_RU_NOT_FULLY_WRITTEN;
-        //     e->flags = FDPEF_PIV | FDPEF_NSIDV | FDPEF_LV;
-        //     e->pid = cpu_to_le16(pid);
-        //     e->nsid = cpu_to_le32(ns->params.nsid);
-        //     e->rgid = cpu_to_le16(rg);
-        //     e->ruhid = cpu_to_le16(ruhid);
-        // }
-
-        /* log (eventual) GC overhead of prematurely swapping the RU */
-        nvme_fdp_stat_inc(&endgrp->fdp.mbmw, nvme_l2b(ns, ru->ruamw));
-    }
-
-    ru->ruamw = ruh->ruamw;
-
-    return true;
 }
 
 static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)

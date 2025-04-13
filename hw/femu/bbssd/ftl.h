@@ -165,12 +165,12 @@ struct fdp_ssdparams {
 
 typedef struct line {
     int id;  /* line id, the same as corresponding block id */
-    int gid; /* line group id */
     int ipc; /* invalid page count in this line */
     int vpc; /* valid page count in this line */
+    struct line_group *lg;
     QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
     /* position in the priority queue for victim lines */
-    size_t                  pos;
+    size_t pos;
 } line;
 
 /* wp: record next write addr */
@@ -185,18 +185,21 @@ struct write_pointer {
 
 struct line_group {
     int id;
-    struct write_pointer wp;
-    int count; // max: rus_per_line
+    int ipc;
+    int vpc;
+    NvmeReclaimUnit *ru; // current ru
 };
 
 struct line_mgmt {
     struct line *lines;
+    struct line_group *line_groups;
     /* free line list, we only need to maintain a list of blk numbers */
     QTAILQ_HEAD(free_line_list, line) free_line_list;
     pqueue_t *victim_line_pq;
-    //QTAILQ_HEAD(victim_line_list, line) victim_line_list;
+    // QTAILQ_HEAD(victim_line_list, line) victim_line_list;
     QTAILQ_HEAD(full_line_list, line) full_line_list;
     int tt_lines;
+    int tt_lgs; // tt_lines / lines_per_ru
     int free_line_cnt;
     int victim_line_cnt;
     int full_line_cnt;

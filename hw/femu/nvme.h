@@ -1083,6 +1083,7 @@ typedef struct NvmeIdNsZoned NvmeIdNsZoned;
 typedef struct NvmeZone NvmeZone;
 
 typedef struct NvmeReclaimUnit {
+    uint16_t id;
     uint64_t ruamw;
 } NvmeReclaimUnit;
 
