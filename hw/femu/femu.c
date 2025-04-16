@@ -380,18 +380,21 @@ static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
     int nphs = 2;
     uint16_t *ph;
 
-    printf("[FEMU] nvme_ns_init_fdp\n");
-
     // nvme_subsys_setup_fdp start
     endgrp->fdp.nrg = 1;
     endgrp->fdp.nruh = 2;
     endgrp->fdp.runs = 64 * 1024 * 1024;
+
+    printf("[FEMU] nvme_ns_init_fdp; nrg: %d, nruh: %d, runs: %"PRIu64"\n",
+           endgrp->fdp.nrg, endgrp->fdp.nruh, endgrp->fdp.runs);
 
     if (!nvme_calc_rgif(endgrp->fdp.nruh, endgrp->fdp.nrg, &endgrp->fdp.rgif)) {
         printf("[FEMU] cannot derive a valid rgif (nruh: %"PRIu16", nrg: %"PRIu32")",
                endgrp->fdp.nruh, endgrp->fdp.nrg);
         return false;
     }
+
+    printf("rgif: %d\n", endgrp->fdp.rgif);
 
     ruh = endgrp->fdp.ruhs = g_malloc0(sizeof(*ruh) * endgrp->fdp.nruh);
 
@@ -436,8 +439,8 @@ static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
     }
 
     ruhid = ruhids = g_new0(unsigned int, endgrp->fdp.nruh);
-    ruhids[0] = 1;
-    ruhids[1] = 2;
+    ruhids[0] = 0;
+    ruhids[1] = 1;
     ph = ns->fdp.phs = g_new(uint16_t, ns->fdp.nphs);
 
     for (unsigned int i = 0; i < ns->fdp.nphs; i++, ruhid++, ph++) {
@@ -453,7 +456,7 @@ static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
             ruh->ruha = NVME_RUHA_HOST;
             ruh->lbafi = lbafi;
             ruh->ruamw = endgrp->fdp.runs >> ns->id_ns.lbaf->lbads;
-            printf("ds: %"PRIu8", ruamw: %"PRIu64"\n", ns->id_ns.lbaf->lbads, ruh->ruamw);
+            printf("[FEMU] ds: %"PRIu8", ruamw: %"PRIu64"\n", ns->id_ns.lbaf->lbads, ruh->ruamw);
 
             for (uint16_t rg = 0; rg < endgrp->fdp.nrg; rg++) {
                 ruh->rus[rg].ruamw = ruh->ruamw;

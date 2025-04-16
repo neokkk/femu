@@ -1082,9 +1082,12 @@ typedef struct Oc12Ctrl Oc12Ctrl;
 typedef struct NvmeIdNsZoned NvmeIdNsZoned;
 typedef struct NvmeZone NvmeZone;
 
+//> nk
 typedef struct NvmeReclaimUnit {
     uint16_t id;
     uint64_t ruamw;
+    QTAILQ_ENTRY(NvmeReclaimUnit) entry;
+    void *lg;
 } NvmeReclaimUnit;
 
 typedef struct NvmeRuHandle {
@@ -1095,7 +1098,7 @@ typedef struct NvmeRuHandle {
     uint64_t ruamw; // # of blocks
 
     /* reclaim units indexed by reclaim group */
-    NvmeReclaimUnit *rus;
+    NvmeReclaimUnit *rus; // NvmeReclaimUnit
 } NvmeRuHandle;
 
 typedef struct NvmeEnduranceGroup {

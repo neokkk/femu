@@ -15,11 +15,13 @@ static void bb_init(FemuCtrl *n, Error **errp)
 {
     struct ssd *ssd = n->ssd = g_malloc0(sizeof(struct ssd));
 
+    printf("[FEMU] bb_init; dataplane_started: %d\n", n->dataplane_started);
+
     bb_init_ctrl_str(n);
 
     ssd->dataplane_started_ptr = &n->dataplane_started;
     ssd->ssdname = (char *)n->devname;
-    femu_debug("Starting FEMU in Blackbox-SSD mode ...\n");
+    printf("[FEMU] blackbox-SSD mode start...\n");
     ssd_init(n);
 }
 

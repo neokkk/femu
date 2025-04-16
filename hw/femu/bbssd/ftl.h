@@ -44,7 +44,6 @@ enum {
     FEMU_DISABLE_LOG = 7,
 };
 
-
 #define BLK_BITS    (16)
 #define PG_BITS     (16)
 #define SEC_BITS    (8)
@@ -160,18 +159,10 @@ struct fdp_ssdparams {
     uint16_t nrg;
     uint16_t nruh;
     uint64_t runs;
+    uint16_t rus_per_rg; // (tt_sec * secsz) / runs / nrg;
     uint16_t lines_per_ru; // rus / (blks_per_line * pgs_per_blk * secs_per_pg * secsz)
+    uint16_t tt_rus; // rus_per_rg * nrg
 };
-
-typedef struct line {
-    int id;  /* line id, the same as corresponding block id */
-    int ipc; /* invalid page count in this line */
-    int vpc; /* valid page count in this line */
-    struct line_group *lg;
-    QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
-    /* position in the priority queue for victim lines */
-    size_t pos;
-} line;
 
 /* wp: record next write addr */
 struct write_pointer {
@@ -185,10 +176,25 @@ struct write_pointer {
 
 struct line_group {
     int id;
+    // int rgid;
     int ipc;
     int vpc;
+    struct write_pointer wp;
     NvmeReclaimUnit *ru; // current ru
+    QTAILQ_HEAD(lines, line) lines;
+    int line_cnt;
 };
+
+typedef struct line {
+    int id;  /* line id, the same as corresponding block id */
+    int ipc; /* invalid page count in this line */
+    int vpc; /* valid page count in this line */
+    struct line_group *lg;
+    QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
+    QTAILQ_ENTRY(line) ru_entry; // for RU
+    /* position in the priority queue for victim lines */
+    size_t pos;
+} line;
 
 struct line_mgmt {
     struct line *lines;
@@ -198,11 +204,15 @@ struct line_mgmt {
     pqueue_t *victim_line_pq;
     // QTAILQ_HEAD(victim_line_list, line) victim_line_list;
     QTAILQ_HEAD(full_line_list, line) full_line_list;
+    QTAILQ_HEAD(full_ru_list, NvmeReclaimUnit) full_ru_list; // GC-target RUs
     int tt_lines;
     int tt_lgs; // tt_lines / lines_per_ru
+    int nlgs; // valid # of lgs
     int free_line_cnt;
     int victim_line_cnt;
     int full_line_cnt;
+    int free_ru_cnt;
+    int full_ru_cnt;
 };
 
 struct nand_cmd {
@@ -218,8 +228,9 @@ struct ssd {
     struct ssd_channel *ch;
     struct ppa *maptbl; /* page level mapping table */
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
-    struct write_pointer wp;
+    // struct write_pointer wp;
     struct line_mgmt lm;
+    NvmeEnduranceGroup *endgrp;
 
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;
