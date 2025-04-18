@@ -160,7 +160,6 @@ struct fdp_ssdparams {
     uint16_t nruh;
     uint64_t runs;
     uint16_t rus_per_rg; // (tt_sec * secsz) / runs / nrg;
-    uint16_t lines_per_ru; // rus / (blks_per_line * pgs_per_blk * secs_per_pg * secsz)
     uint16_t tt_rus; // rus_per_rg * nrg
 };
 
@@ -207,6 +206,7 @@ struct line_mgmt {
     QTAILQ_HEAD(full_ru_list, NvmeReclaimUnit) full_ru_list; // GC-target RUs
     int tt_lines;
     int tt_lgs; // tt_lines / lines_per_ru
+    int lines_per_ru; // rus / (blks_per_line * pgs_per_blk * secs_per_pg * secsz)
     int nlgs; // valid # of lgs
     int free_line_cnt;
     int victim_line_cnt;

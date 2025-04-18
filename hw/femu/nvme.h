@@ -1098,7 +1098,7 @@ typedef struct NvmeRuHandle {
     uint64_t ruamw; // # of blocks
 
     /* reclaim units indexed by reclaim group */
-    NvmeReclaimUnit *rus; // NvmeReclaimUnit
+    NvmeReclaimUnit **rus; // NvmeReclaimUnit
 } NvmeRuHandle;
 
 typedef struct NvmeEnduranceGroup {
@@ -1118,7 +1118,7 @@ typedef struct NvmeEnduranceGroup {
 
         bool enabled;
 
-        NvmeRuHandle *ruhs;
+        NvmeRuHandle **ruhs;
     } fdp;
 } NvmeEnduranceGroup;
 
