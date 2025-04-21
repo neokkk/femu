@@ -200,8 +200,7 @@ struct line_mgmt {
     struct line_group *line_groups;
     /* free line list, we only need to maintain a list of blk numbers */
     QTAILQ_HEAD(free_line_list, line) free_line_list;
-    pqueue_t *victim_line_pq;
-    // QTAILQ_HEAD(victim_line_list, line) victim_line_list;
+    // pqueue_t *victim_line_pq;
     QTAILQ_HEAD(full_line_list, line) full_line_list;
     QTAILQ_HEAD(full_ru_list, NvmeReclaimUnit) full_ru_list; // GC-target RUs
     int tt_lines;
