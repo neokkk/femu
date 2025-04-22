@@ -3643,7 +3643,7 @@ foreach d, list : target_modules
           target_inc = [include_directories('target' / config_target['TARGET_BASE_ARCH'])]
           c_args = ['-DNEED_CPU_H',
                     '-DCONFIG_TARGET="@0@-config-target.h"'.format(target),
-                    '-DCONFIG_DEVICES="@0@-config-devices.h"'.format(target)]
+                    '-DCONFIG_DEVICES="@0@-config-devices.h"'.format(target), '-g']
           target_module_ss = module_ss.apply(config_target, strict: false)
           if target_module_ss.sources() != []
             module_name = d + '-' + m + '-' + config_target['TARGET_NAME']
