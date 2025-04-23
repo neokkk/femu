@@ -1082,24 +1082,6 @@ typedef struct Oc12Ctrl Oc12Ctrl;
 typedef struct NvmeIdNsZoned NvmeIdNsZoned;
 typedef struct NvmeZone NvmeZone;
 
-//> nk
-typedef struct NvmeReclaimUnit {
-    uint16_t id;
-    uint64_t ruamw;
-    QTAILQ_ENTRY(NvmeReclaimUnit) entry;
-    void *lg;
-} NvmeReclaimUnit;
-
-typedef struct NvmeRuHandle {
-    uint8_t  ruht;
-    uint8_t  ruha;
-    uint64_t event_filter;
-    uint8_t  lbafi;
-    uint64_t ruamw; // # of blocks
-
-    /* reclaim units indexed by reclaim group */
-    NvmeReclaimUnit **rus; // NvmeReclaimUnit
-} NvmeRuHandle;
 
 typedef struct NvmeEnduranceGroup {
     uint8_t event_conf;
@@ -1118,7 +1100,7 @@ typedef struct NvmeEnduranceGroup {
 
         bool enabled;
 
-        NvmeRuHandle **ruhs;
+        // void **ruhs; // struct ruh
     } fdp;
 } NvmeEnduranceGroup;
 
@@ -1653,7 +1635,6 @@ static inline size_t nvme_m2b(NvmeNamespace *ns, uint64_t lba)
 static inline bool nvme_parse_pid(NvmeNamespace *ns, uint16_t pid,
                                   uint16_t *ph, uint16_t *rg)
 {
-    printf("[FEMU] nvme_parse_pid: %d\n", pid);
     *rg = nvme_pid2rg(ns, pid);
     *ph = nvme_pid2ph(ns, pid);
 

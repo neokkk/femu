@@ -327,20 +327,20 @@ static int nvme_check_constraints(FemuCtrl *n)
     return 0;
 }
 
-static NvmeRuHandle *nvme_find_ruh_by_attr(NvmeEnduranceGroup *endgrp,
-                                           uint8_t ruha, uint16_t *ruhid)
-{
-    for (uint16_t i = 0; i < endgrp->fdp.nruh; i++) {
-        NvmeRuHandle *ruh = endgrp->fdp.ruhs[i];
-
-        if (ruh->ruha == ruha) {
-            *ruhid = i;
-            return ruh;
-        }
-    }
-
-    return NULL;
-}
+// static NvmeRuHandle *nvme_find_ruh_by_attr(NvmeEnduranceGroup *endgrp,
+//                                            uint8_t ruha, uint16_t *ruhid)
+// {
+//     for (uint16_t i = 0; i < endgrp->fdp.nruh; i++) {
+//         NvmeRuHandle *ruh = endgrp->fdp.ruhs[i];
+//
+//         if (ruh->ruha == ruha) {
+//             *ruhid = i;
+//             return ruh;
+//         }
+//     }
+//
+//     return NULL;
+// }
 
 static bool nvme_calc_rgif(uint16_t nruh, uint16_t nrg, uint8_t *rgif)
 {
@@ -373,9 +373,8 @@ static bool nvme_calc_rgif(uint16_t nruh, uint16_t nrg, uint8_t *rgif)
 static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
 {
     NvmeEnduranceGroup *endgrp = ns->endgrp = &n->endgrp;
-    NvmeRuHandle *ruh;
-    NvmeReclaimUnit *ru;
-    uint8_t lbafi = NVME_ID_NS_FLBAS_INDEX(ns->id_ns.flbas);
+    // NvmeRuHandle *ruh;
+    // NvmeReclaimUnit *ru;
     g_autofree unsigned int *ruhids = NULL;
     unsigned int *ruhid;
     int nphs = 2;
@@ -397,46 +396,45 @@ static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
 
     printf("rgif: %d\n", endgrp->fdp.rgif);
 
-    endgrp->fdp.ruhs = g_malloc0(sizeof(NvmeRuHandle *) * endgrp->fdp.nruh);
+    // endgrp->fdp.ruhs = g_malloc0(sizeof(NvmeRuHandle *) * endgrp->fdp.nruh);
 
-    for (uint16_t r = 0; r < endgrp->fdp.nruh; r++) {
-        ruh = endgrp->fdp.ruhs[r] = g_malloc0(sizeof(NvmeRuHandle));
-        ruh->ruht = NVME_RUHT_INITIALLY_ISOLATED;
-        ruh->ruha = NVME_RUHA_UNUSED;
-        ruh->rus = g_malloc0(sizeof(NvmeReclaimUnit *) * endgrp->fdp.nrg);
-    }
+    // for (uint16_t r = 0; r < endgrp->fdp.nruh; r++) {
+    //     ruh = endgrp->fdp.ruhs[r] = g_malloc0(sizeof(NvmeRuHandle));
+    //     ruh->ruht = NVME_RUHT_INITIALLY_ISOLATED;
+    //     ruh->ruha = NVME_RUHA_UNUSED;
+    //     ruh->rus = g_malloc0(sizeof(NvmeReclaimUnit *) * endgrp->fdp.nrg);
+    // }
 
-    endgrp->fdp.enabled = true;
     // nvme_subsys_setup_fdp end
 
     ns->fdp.nphs = nphs;
 
-    if (!ruh) {
-        ph = ns->fdp.phs = g_malloc0(sizeof(uint16_t) * nphs);
-        ruh = nvme_find_ruh_by_attr(endgrp, NVME_RUHA_CTRL, ph);
-
-        if (!ruh) {
-            ruh = nvme_find_ruh_by_attr(endgrp, NVME_RUHA_UNUSED, ph);
-            if (!ruh) {
-                printf("no unused reclaim unit handles left\n");
-                return false;
-            }
-
-            ruh->ruha = NVME_RUHA_CTRL;
-            ruh->lbafi = lbafi;
-            ruh->ruamw = endgrp->fdp.runs >> ns->id_ns.lbaf->lbads;
-
-            for (uint16_t rg = 0; rg < endgrp->fdp.nrg; rg++) {
-                ruh->rus[rg]->ruamw = ruh->ruamw;
-            }
-        } else if (ruh->lbafi != lbafi) {
-            printf("lba format index of controller assigned "
-                       "reclaim unit handle does not match namespace lba "
-                       "format index\n");
-            return false;
-        }
-        return true;
-    }
+    // if (!ruh) {
+    //     ph = ns->fdp.phs = g_malloc0(sizeof(uint16_t) * nphs);
+    //     ruh = nvme_find_ruh_by_attr(endgrp, NVME_RUHA_CTRL, ph);
+    //
+    //     if (!ruh) {
+    //         ruh = nvme_find_ruh_by_attr(endgrp, NVME_RUHA_UNUSED, ph);
+    //         if (!ruh) {
+    //             printf("no unused reclaim unit handles left\n");
+    //             return false;
+    //         }
+    //
+    //         ruh->ruha = NVME_RUHA_CTRL;
+    //         ruh->lbafi = lbafi;
+    //         ruh->ruamw = endgrp->fdp.runs >> ns->id_ns.lbaf->lbads;
+    //
+    //         for (uint16_t rg = 0; rg < endgrp->fdp.nrg; rg++) {
+    //             ruh->rus[rg]->ruamw = ruh->ruamw;
+    //         }
+    //     } else if (ruh->lbafi != lbafi) {
+    //         printf("lba format index of controller assigned "
+    //                    "reclaim unit handle does not match namespace lba "
+    //                    "format index\n");
+    //         return false;
+    //     }
+    //     return true;
+    // }
 
     ruhid = ruhids = g_new0(unsigned int, endgrp->fdp.nruh);
     ruhids[0] = 0;
@@ -449,35 +447,35 @@ static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
             return false;
         }
 
-        ruh = endgrp->fdp.ruhs[*ruhid];
-
-        switch (ruh->ruha) {
-        case NVME_RUHA_UNUSED:
-            ruh->ruha = NVME_RUHA_HOST;
-            ruh->lbafi = lbafi;
-            ruh->ruamw = endgrp->fdp.runs >> ns->id_ns.lbaf->lbads;
-
-            printf("ds: %"PRIu8", ruamw: %"PRIu64"\n", ns->id_ns.lbaf->lbads, ruh->ruamw);
-
-            for (uint16_t rg = 0; rg < endgrp->fdp.nrg; rg++) {
-                ru = ruh->rus[rg] = g_malloc0(sizeof(NvmeReclaimUnit));
-                ru->ruamw = ruh->ruamw;
-            }
-            break;
-        case NVME_RUHA_HOST:
-            if (ruh->lbafi != lbafi) {
-                printf("[FEMU] lba format index of host assigned"
-                           "reclaim unit handle does not match namespace "
-                           "lba format index\n");
-                return false;
-            }
-            break;
-        case NVME_RUHA_CTRL:
-            printf("[FEMU] reclaim unit handle is controller assigned\n");
-            return false;
-        default:
-            abort();
-        }
+        // ruh = endgrp->fdp.ruhs[*ruhid];
+        //
+        // switch (ruh->ruha) {
+        // case NVME_RUHA_UNUSED:
+        //     ruh->ruha = NVME_RUHA_HOST;
+        //     ruh->lbafi = lbafi;
+        //     ruh->ruamw = endgrp->fdp.runs >> ns->id_ns.lbaf->lbads;
+        //
+        //     printf("ds: %"PRIu8", ruamw: %"PRIu64"\n", ns->id_ns.lbaf->lbads, ruh->ruamw);
+        //
+        //     for (uint16_t rg = 0; rg < endgrp->fdp.nrg; rg++) {
+        //         ru = ruh->rus[rg] = g_malloc0(sizeof(NvmeReclaimUnit));
+        //         ru->ruamw = ruh->ruamw;
+        //     }
+        //     break;
+        // case NVME_RUHA_HOST:
+        //     if (ruh->lbafi != lbafi) {
+        //         printf("[FEMU] lba format index of host assigned"
+        //                    "reclaim unit handle does not match namespace "
+        //                    "lba format index\n");
+        //         return false;
+        //     }
+        //     break;
+        // case NVME_RUHA_CTRL:
+        //     printf("[FEMU] reclaim unit handle is controller assigned\n");
+        //     return false;
+        // default:
+        //     abort();
+        // }
 
         *ph = *ruhid;
     }

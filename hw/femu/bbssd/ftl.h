@@ -161,6 +161,10 @@ struct fdp_ssdparams {
     uint64_t runs;
     uint16_t rus_per_rg; // (tt_sec * secsz) / runs / nrg;
     uint16_t tt_rus; // rus_per_rg * nrg
+
+    // namespace
+    uint8_t lbafi;
+    uint64_t ruamw;
 };
 
 /* wp: record next write addr */
@@ -173,45 +177,64 @@ struct write_pointer {
     int pl;
 };
 
-struct line_group {
-    int id;
-    // int rgid;
-    int ipc;
-    int vpc;
-    struct write_pointer wp;
-    NvmeReclaimUnit *ru; // current ru
-    QTAILQ_HEAD(lines, line) lines;
-    int line_cnt;
-};
+// struct line_group {
+//     int id;
+//     // int rgid;
+//     int ipc;
+//     int vpc;
+//     struct write_pointer wp;
+//     NvmeReclaimUnit *ru; // current ru
+//     QTAILQ_HEAD(lines, line) lines;
+//     int line_cnt;
+// };
 
 typedef struct line {
     int id;  /* line id, the same as corresponding block id */
     int ipc; /* invalid page count in this line */
     int vpc; /* valid page count in this line */
-    struct line_group *lg;
+    struct ru *ru;
     QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
     QTAILQ_ENTRY(line) ru_entry; // for RU
     /* position in the priority queue for victim lines */
     size_t pos;
 } line;
 
+//> nk
+typedef struct ru {
+    uint16_t ruhid;
+    uint16_t rgid;
+    // uint64_t ipc;
+    // uint64_t vpc;
+    uint64_t ruamw;
+    struct write_pointer wp;
+    uint32_t line_cnt;
+    QTAILQ_HEAD(lines, line) lines;
+} ru;
+
+typedef struct ruh {
+    uint8_t  ruht;
+    uint8_t  ruha;
+    // uint64_t event_filter;
+    uint8_t  lbafi;
+    uint64_t ruamw; // # of blocks
+    struct ru **rus; // NvmeReclaimUnit
+} ruh;
+
 struct line_mgmt {
     struct line *lines;
-    struct line_group *line_groups;
+    // struct line_group *line_groups;
     /* free line list, we only need to maintain a list of blk numbers */
     QTAILQ_HEAD(free_line_list, line) free_line_list;
-    // pqueue_t *victim_line_pq;
+    pqueue_t *victim_line_pq;
     QTAILQ_HEAD(full_line_list, line) full_line_list;
-    QTAILQ_HEAD(full_ru_list, NvmeReclaimUnit) full_ru_list; // GC-target RUs
+    // QTAILQ_HEAD(full_ru_list, ru) full_ru_list; // GC-target RUs
     int tt_lines;
-    int tt_lgs; // tt_lines / lines_per_ru
     int lines_per_ru; // rus / (blks_per_line * pgs_per_blk * secs_per_pg * secsz)
-    int nlgs; // valid # of lgs
     int free_line_cnt;
     int victim_line_cnt;
     int full_line_cnt;
     int free_ru_cnt;
-    int full_ru_cnt;
+    // int full_ru_cnt;
 };
 
 struct nand_cmd {
@@ -225,11 +248,13 @@ struct ssd {
     struct ssdparams sp;
     struct fdp_ssdparams fsp;
     struct ssd_channel *ch;
+    struct ruh **ruhs;
     struct ppa *maptbl; /* page level mapping table */
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
     // struct write_pointer wp;
     struct line_mgmt lm;
     NvmeEnduranceGroup *endgrp;
+    NvmeNamespace *ns;
 
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;
