@@ -328,6 +328,7 @@ enum NvmeAdminCommands {
     NVME_ADM_CMD_SET_DB_MEMORY  = 0x7c,
     NVME_ADM_CMD_FEMU_DEBUG     = 0xee,
     NVME_ADM_CMD_FEMU_FLIP      = 0xef,
+    NVME_ADM_CMD_FEMU_FDP_STATS = 0xff, //> nk: tmp
 };
 
 enum NvmeIoCommands {
@@ -344,6 +345,32 @@ enum NvmeIoCommands {
     NVME_CMD_OC_ERASE           = 0x90,
     NVME_CMD_OC_WRITE           = 0x91,
     NVME_CMD_OC_READ            = 0x92,
+};
+
+enum NvmeLogIdentifier {
+    NVME_LOG_ERROR_INFO                 = 0x01,
+    NVME_LOG_SMART_INFO                 = 0x02,
+    NVME_LOG_FW_SLOT_INFO               = 0x03,
+    NVME_LOG_CHANGED_NSLIST             = 0x04,
+    NVME_LOG_CMD_EFFECTS                = 0x05,
+    NVME_LOG_ENDGRP                     = 0x09,
+    NVME_LOG_FDP_CONFS                  = 0x20,
+    NVME_LOG_FDP_RUH_USAGE              = 0x21,
+    NVME_LOG_FDP_STATS                  = 0x22,
+    NVME_LOG_FDP_EVENTS                 = 0x23,
+    NVME_LOG_VENDOR_START               = 0xc0,
+    NVME_LOG_VENDOR_END                 = 0xff,
+};
+
+enum NvmeRuhAttributes {
+    NVME_RUHA_UNUSED = 0,
+    NVME_RUHA_HOST = 1,
+    NVME_RUHA_CTRL = 2,
+};
+
+enum NvmeRuhType {
+    NVME_RUHT_INITIALLY_ISOLATED = 1,
+    NVME_RUHT_PERSISTENTLY_ISOLATED = 2,
 };
 
 typedef struct NvmeDeleteQ {
@@ -532,6 +559,7 @@ enum NvmeStatusCodes {
     NVME_INVALID_NSID           = 0x000b,
     NVME_CMD_SEQ_ERROR          = 0x000c,
     NVME_INVALID_CMD_SET        = 0x002c,
+    NVME_FDP_DISABLED           = 0x0029,
     NVME_LBA_RANGE              = 0x0080,
     NVME_CAP_EXCEEDED           = 0x0081,
     NVME_NS_NOT_READY           = 0x0082,
@@ -646,13 +674,6 @@ enum {
     NVME_CMD_EFF_CCC        = 1 << 4,
     NVME_CMD_EFF_CSE_MASK   = 3 << 16,
     NVME_CMD_EFF_UUID_SEL   = 1 << 19,
-};
-
-enum LogIdentifier {
-    NVME_LOG_ERROR_INFO     = 0x01,
-    NVME_LOG_SMART_INFO     = 0x02,
-    NVME_LOG_FW_SLOT_INFO   = 0x03,
-    NVME_LOG_CMD_EFFECTS    = 0x05,
 };
 
 typedef struct NvmePSD {
@@ -1059,6 +1080,27 @@ typedef struct Oc12Ctrl Oc12Ctrl;
 typedef struct NvmeIdNsZoned NvmeIdNsZoned;
 typedef struct NvmeZone NvmeZone;
 
+typedef struct NvmeEnduranceGroup {
+    uint8_t event_conf;
+
+    struct {
+        // NvmeFdpEventBuffer host_events, ctrl_events;
+
+        uint16_t nruh;
+        uint16_t nrg;
+        uint8_t  rgif;
+        uint64_t runs;
+
+        uint64_t hbmw;
+        uint64_t mbmw;
+        uint64_t mbe;
+
+        bool enabled;
+
+        void *ruhs;
+    } fdp;
+} NvmeEnduranceGroup;
+
 typedef struct NvmeNamespace {
     struct FemuCtrl *ctrl;
     NvmeIdNs        id_ns;
@@ -1073,7 +1115,7 @@ typedef struct NvmeNamespace {
     uint64_t        tbl_dsk_start_offset;
     uint32_t        tbl_entries;
     uint64_t        *tbl;
-    Oc12Bbt   **bbtbl;
+    Oc12Bbt         **bbtbl;
 
     /* Coperd: OC20 */
     struct {
@@ -1083,8 +1125,35 @@ typedef struct NvmeNamespace {
         uint64_t meta;
     } blk;
 
+    NvmeEnduranceGroup *endgrp;
+    struct {
+        uint16_t nphs;
+        uint16_t *phs;
+    } fdp;
+
     void *state;
 } NvmeNamespace;
+
+typedef struct QEMU_PACKED NvmeRuhuDescr {
+    uint8_t ruha;
+    uint8_t rsvd1[7];
+} NvmeRuhuDescr;
+
+typedef struct QEMU_PACKED NvmeFdpStatsLog {
+    uint64_t hbmw[2];
+    uint64_t mbmw[2];
+    uint64_t mbe[2];
+    uint8_t  rsvd48[16];
+} NvmeFdpStatsLog;
+
+enum NvmeDirectiveTypes {
+    NVME_DIRECTIVE_IDENTIFY       = 0x0,
+    NVME_DIRECTIVE_DATA_PLACEMENT = 0x2,
+};
+
+enum NvmeDirectiveOperations {
+    NVME_DIRECTIVE_RETURN_PARAMS = 0x1,
+};
 
 #define TYPE_NVME "femu"
 #define FEMU(obj) OBJECT_CHECK(FemuCtrl, (obj), TYPE_NVME)
@@ -1337,7 +1406,16 @@ typedef struct FemuCtrl {
     int64_t blk_er_lat_ns;
     int64_t chnl_pg_xfer_lat_ns;
 
+    NvmeEnduranceGroup endgrp;
+
     BbCtrlParams bb_params;
+
+    struct {
+        bool enabled;
+        uint64_t runs;
+        uint16_t nruh;
+        uint32_t nrg;
+    } fdp_params;
 
     struct ssd      *ssd;
     SsdDramBackend  *mbe;
@@ -1506,6 +1584,18 @@ static inline uint16_t nvme_check_mdts(FemuCtrl *n, size_t len)
     }
 
     return NVME_SUCCESS;
+}
+
+static inline void nvme_fdp_stat_inc(uint64_t *a, uint64_t b)
+{
+    uint64_t ret = *a + b;
+    *a = ret < *a ? UINT64_MAX : ret;
+}
+
+static inline void nvme_fdp_stat_dec(uint64_t *a, uint64_t b)
+{
+    uint64_t ret = *a - b;
+    *a = ret > *a ? 0 : ret;
 }
 
 #define MN_MAX_LEN (64)

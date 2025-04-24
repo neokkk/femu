@@ -856,6 +856,39 @@ static uint16_t nvme_cmd_effects(FemuCtrl *n, NvmeCmd *cmd, uint8_t csi,
     return dma_read_prp(n, ((uint8_t *)&log) + off, trans_len, prp1, prp2);
 }
 
+static uint16_t nvme_fdp_stats(FemuCtrl *n, NvmeCmd *cmd, uint8_t csi,
+                                  uint32_t buf_len, uint64_t off)
+{
+    uint64_t prp1 = le64_to_cpu(cmd->dptr.prp1);
+    uint64_t prp2 = le64_to_cpu(cmd->dptr.prp2);
+    NvmeEnduranceGroup *endgrp;
+    NvmeFdpStatsLog log = {};
+    uint32_t trans_len;
+
+    printf("[FEMU] nvme_fdp_stats; off: %" PRIu64 ", csi: %d, enabled: %d\n", off, (int)csi, n->endgrp.fdp.enabled);
+
+    if (off >= sizeof(NvmeFdpStatsLog)) {
+        return NVME_INVALID_FIELD | NVME_DNR;
+    }
+    // if (csi != 1) {
+    //     return NVME_INVALID_FIELD | NVME_DNR;
+    // }
+    if (!n->endgrp.fdp.enabled) {
+        return NVME_FDP_DISABLED | NVME_DNR;
+    }
+
+    endgrp = &n->endgrp;
+    trans_len = MIN(sizeof(log) - off, buf_len);
+
+    log.hbmw[0] = cpu_to_le64(endgrp->fdp.hbmw);
+    log.mbmw[0] = cpu_to_le64(endgrp->fdp.mbmw);
+    log.mbe[0] = cpu_to_le64(endgrp->fdp.mbe);
+
+    printf("[FEMU] nvme_fdp_stats; hbmw: %" PRIu64 ", mbmw: %" PRIu64 "\n", log.hbmw[0], log.mbmw[0]);
+
+    return dma_write_prp(n, ((uint8_t *)&log) + off, trans_len, prp1, prp2);
+}
+
 static uint16_t nvme_get_log(FemuCtrl *n, NvmeCmd *cmd)
 {
     uint32_t dw10 = le32_to_cpu(cmd->cdw10);
@@ -868,6 +901,8 @@ static uint16_t nvme_get_log(FemuCtrl *n, NvmeCmd *cmd)
     uint64_t off, lpol, lpou;
     uint32_t numdl, numdu;
     int status;
+
+    printf("[FEMU] nvme_get_log: %d\n", lid);
 
     numdl = (dw10 >> 16);
     numdu = (dw11 & 0xffff);
@@ -895,6 +930,8 @@ static uint16_t nvme_get_log(FemuCtrl *n, NvmeCmd *cmd)
         return nvme_fw_log_info(n, cmd, len);
     case NVME_LOG_CMD_EFFECTS:
         return nvme_cmd_effects(n, cmd, csi, len, off);
+     case NVME_LOG_FDP_STATS:
+         return nvme_fdp_stats(n, cmd, csi, len, off);
     default:
         if (n->ext_ops.get_log) {
             return n->ext_ops.get_log(n, cmd);
