@@ -10,8 +10,8 @@ static int do_gc(struct ssd *ssd, bool force);
 static inline bool should_gc(struct ssd *ssd)
 {
     struct line_mgmt *lm = &ssd->lm;
-    bool gc = ssd->lm.free_line_cnt <= ssd->sp.gc_thres_lines;
-    gc |= (lm->free_ru_cnt < 8);
+    // bool gc = ssd->lm.free_line_cnt <= ssd->sp.gc_thres_lines;
+    bool gc = (lm->free_ru_cnt < 8);
     if (gc)
         printf("[FEMU] should_gc; free_ru_cnt: %d, free_line_cnt: %d, gc_thres_lines: %d\n",
                lm->free_ru_cnt, lm->free_line_cnt, ssd->sp.gc_thres_lines);
@@ -21,8 +21,8 @@ static inline bool should_gc(struct ssd *ssd)
 static inline bool should_gc_high(struct ssd *ssd)
 {
     struct line_mgmt *lm = &ssd->lm;
-    bool gc = lm->free_line_cnt <= ssd->sp.gc_thres_lines_high;
-    gc |= (lm->free_ru_cnt < 4);
+    // bool gc = lm->free_line_cnt <= ssd->sp.gc_thres_lines_high;
+    bool gc = (lm->free_ru_cnt < 4);
     if (gc) {
         printf("[FEMU] should_gc_high; free_ru_cnt: %d, free_line_cnt: %d, gc_thres_lines: %d\n",
                lm->free_ru_cnt, lm->free_line_cnt, ssd->sp.gc_thres_lines);
@@ -188,7 +188,7 @@ static struct ru *get_next_free_ru(struct ssd *ssd, struct ru *old_ru)
     struct line_mgmt *lm = &ssd->lm;
     struct ru *ru;
 
-    printf("[FEMU] get_next_free_ru; free_ru_cnt: %d\n", lm->free_ru_cnt);
+    printf("[FEMU] get_next_free_ru\n");
 
     if (lm->free_ru_cnt < 1) {
         printf("[FEMU] cannot get free RU\n");
@@ -203,8 +203,6 @@ static struct ru *get_next_free_ru(struct ssd *ssd, struct ru *old_ru)
     // ru->ruamw = ssd->ruhs[old_ru->ruhid]->ruamw;
     QTAILQ_INIT(&ru->lines);
     lm->free_ru_cnt--;
-
-    printf("get_next_free_ru end\n");
 
     return ru;
 }
@@ -293,6 +291,7 @@ static void ssd_advance_write_pointer(struct ssd *ssd, struct ru *old_ru)
                     wpp->ch = 0;
                     wpp->lun = 0;
                     wpp->pl = 0;
+                    wpp->blk = 0;
                     wpp->pg = 0;
                 }
 
@@ -860,9 +859,9 @@ static struct line *select_victim_line(struct ssd *ssd, bool force)
         return NULL;
     }
 
-    // if (!force && victim_line->ipc < ssd->sp.pgs_per_line / 8) {
-    //     return NULL;
-    // }
+    if (!force && victim_line->ipc < ssd->sp.pgs_per_line / 4) {
+        return NULL;
+    }
 
     pqueue_pop(lm->victim_line_pq);
     victim_line->pos = 0;
@@ -890,7 +889,7 @@ static void clean_one_block(struct ssd *ssd, struct ppa *ppa)
             /* delay the maptbl update until "write" happens */
             gc_write_page(ssd, ppa);
         }
-        printf("clean_one_block; status: %d, %d / %d\n", pg_iter->status, ++cnt, spp->pgs_per_blk);
+        // printf("clean_one_block; status: %d, %d / %d\n", pg_iter->status, ++cnt, spp->pgs_per_blk);
     }
 
     if (cnt > 0) {
@@ -899,7 +898,7 @@ static void clean_one_block(struct ssd *ssd, struct ppa *ppa)
     }
 
     ftl_assert(get_blk(ssd, ppa)->vpc == cnt);
-    printf("clean_one_block end\n");
+    // printf("clean_one_block end\n");
 }
 
 static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
@@ -915,6 +914,7 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
 
     /* move this line to free line list */
     QTAILQ_INSERT_TAIL(&lm->free_line_list, line, entry);
+    printf("mark_line_free end\n");
     lm->free_line_cnt++;
 }
 
