@@ -177,17 +177,6 @@ struct write_pointer {
     int pl;
 };
 
-// struct line_group {
-//     int id;
-//     // int rgid;
-//     int ipc;
-//     int vpc;
-//     struct write_pointer wp;
-//     NvmeReclaimUnit *ru; // current ru
-//     QTAILQ_HEAD(lines, line) lines;
-//     int line_cnt;
-// };
-
 typedef struct line {
     int id;  /* line id, the same as corresponding block id */
     int ipc; /* invalid page count in this line */
@@ -222,19 +211,16 @@ typedef struct ruh {
 
 struct line_mgmt {
     struct line *lines;
-    // struct line_group *line_groups;
     /* free line list, we only need to maintain a list of blk numbers */
     QTAILQ_HEAD(free_line_list, line) free_line_list;
     pqueue_t *victim_line_pq;
     QTAILQ_HEAD(full_line_list, line) full_line_list;
-    // QTAILQ_HEAD(full_ru_list, ru) full_ru_list; // GC-target RUs
     int tt_lines;
     int lines_per_ru; // rus / (blks_per_line * pgs_per_blk * secs_per_pg * secsz)
     int free_line_cnt;
     int victim_line_cnt;
     int full_line_cnt;
     int free_ru_cnt;
-    // int full_ru_cnt;
 };
 
 struct nand_cmd {
@@ -251,7 +237,6 @@ struct ssd {
     struct ruh **ruhs;
     struct ppa *maptbl; /* page level mapping table */
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
-    // struct write_pointer wp;
     struct line_mgmt lm;
     NvmeEnduranceGroup *endgrp;
     NvmeNamespace *ns;
