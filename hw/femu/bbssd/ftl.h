@@ -52,6 +52,8 @@ enum {
 #define LUN_BITS    (8)
 #define CH_BITS     (7)
 
+struct ru_handle;
+
 /* describe a physical page addr */
 struct ppa {
     union {
@@ -174,7 +176,8 @@ typedef struct line {
     int vpc; /* valid page count in this line */
     QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
     /* position in the priority queue for victim lines */
-    size_t                  pos;
+    size_t pos;
+    struct ru_handle *ruh;
 } line;
 
 /* wp: record next write addr */
@@ -186,6 +189,12 @@ struct write_pointer {
     int blk;
     int pl;
 };
+
+typedef struct ru_handle {
+    // QTAILQ_HEAD(lines, line) lines;
+    struct line *line; // current line ptr
+    struct write_pointer wp;
+} ru_handle;
 
 struct line_mgmt {
     struct line *lines;
@@ -213,11 +222,11 @@ struct ssd {
     struct ssd_channel *ch;
     struct ppa *maptbl; /* page level mapping table */
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
-    struct write_pointer wp;
     struct line_mgmt lm;
 
     NvmeEnduranceGroup *endgrp;
     NvmeNamespace *ns;
+    struct ru_handle *ruhs;
 
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;

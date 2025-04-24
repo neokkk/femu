@@ -1096,8 +1096,6 @@ typedef struct NvmeEnduranceGroup {
         uint64_t mbe;
 
         bool enabled;
-
-        void *ruhs;
     } fdp;
 } NvmeEnduranceGroup;
 
@@ -1584,6 +1582,57 @@ static inline uint16_t nvme_check_mdts(FemuCtrl *n, size_t len)
     }
 
     return NVME_SUCCESS;
+}
+
+static inline bool nvme_ph_valid(NvmeNamespace *ns, uint16_t ph)
+{
+    return ph < ns->fdp.nphs;
+}
+
+static inline bool nvme_rg_valid(NvmeEnduranceGroup *endgrp, uint16_t rg)
+{
+    return rg < endgrp->fdp.nrg;
+}
+
+static inline uint16_t nvme_pid2ph(NvmeNamespace *ns, uint16_t pid)
+{
+    uint16_t rgif = ns->endgrp->fdp.rgif;
+
+    if (!rgif) {
+        return pid;
+    }
+
+    return pid & ((1 << (15 - rgif)) - 1);
+}
+
+static inline uint16_t nvme_pid2rg(NvmeNamespace *ns, uint16_t pid)
+{
+    uint16_t rgif = ns->endgrp->fdp.rgif;
+
+    if (!rgif) {
+        return 0;
+    }
+
+    return pid >> (16 - rgif);
+}
+
+static inline size_t nvme_l2b(NvmeNamespace *ns, uint64_t lba)
+{
+    return lba << ns->id_ns.lbaf->lbads;
+}
+
+static inline size_t nvme_m2b(NvmeNamespace *ns, uint64_t lba)
+{
+    return ns->id_ns.lbaf->ms * lba;
+}
+
+static inline bool nvme_parse_pid(NvmeNamespace *ns, uint16_t pid,
+                                  uint16_t *ph, uint16_t *rg)
+{
+    *rg = nvme_pid2rg(ns, pid);
+    *ph = nvme_pid2ph(ns, pid);
+
+    return nvme_ph_valid(ns, *ph) && nvme_rg_valid(ns->endgrp, *rg);
 }
 
 static inline void nvme_fdp_stat_inc(uint64_t *a, uint64_t b)

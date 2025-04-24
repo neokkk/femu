@@ -112,15 +112,19 @@ static void ssd_init_lines(struct ssd *ssd)
     ftl_assert(lm->free_line_cnt == lm->tt_lines);
     lm->victim_line_cnt = 0;
     lm->full_line_cnt = 0;
+
+    printf("[FEMU] ssd_init_lines; tt_lines: %d, line size: %lu\n",
+           lm->tt_lines, (uint64_t)spp->secsz * spp->tt_secs / lm->tt_lines);
 }
 
-static void ssd_init_write_pointer(struct ssd *ssd)
+static void ssd_init_write_pointer(struct ssd *ssd, struct ru_handle *ruh)
 {
-    struct write_pointer *wpp = &ssd->wp;
+    struct write_pointer *wpp = &ruh->wp;
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
 
     curline = QTAILQ_FIRST(&lm->free_line_list);
+    curline->ruh = ruh;
     QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
     lm->free_line_cnt--;
 
@@ -133,18 +137,33 @@ static void ssd_init_write_pointer(struct ssd *ssd)
     wpp->pl = 0;
 }
 
+static void ssd_init_ruhs(struct ssd *ssd)
+{
+    struct fdp_ssdparams *fspp = &ssd->fsp;
+    struct ru_handle *ruh;
+
+    printf("[FEMU] ssd_ruhs\n");
+    ssd->ruhs = g_malloc0(sizeof(struct ru_handle) * fspp->nruh);
+    for (int i = 0; i < fspp->nruh; i++) {
+        ruh = &ssd->ruhs[i];
+        ruh->line = NULL;
+        ssd_init_write_pointer(ssd, ruh);
+    }
+}
+
 static inline void check_addr(int a, int max)
 {
     ftl_assert(a >= 0 && a < max);
 }
 
-static struct line *get_next_free_line(struct ssd *ssd)
+static struct line *get_next_free_line(struct ssd *ssd, struct ru_handle *ruh)
 {
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
 
-    printf("[FEMU] get_next_free_line; free_line_cnt: %d, victim_line_cnt: %d, full_line_cnt: %d\n",
-           lm->free_line_cnt, lm->victim_line_cnt, lm->full_line_cnt);
+    printf("[FEMU] get_next_free_line; free_line_cnt: %d, victim_line_cnt: %d, full_line_cnt: %d, total_cnt: %d\n",
+           lm->free_line_cnt, lm->victim_line_cnt, lm->full_line_cnt,
+           lm->free_line_cnt + lm->victim_line_cnt + lm->full_line_cnt);
 
     curline = QTAILQ_FIRST(&lm->free_line_list);
     if (!curline) {
@@ -152,29 +171,33 @@ static struct line *get_next_free_line(struct ssd *ssd)
         return NULL;
     }
 
+    curline->ruh = ruh;
     QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
     lm->free_line_cnt--;
     return curline;
 }
 
-static void ssd_advance_write_pointer(struct ssd *ssd)
+static void ssd_advance_write_pointer(struct ssd *ssd, struct ru_handle *ruh)
 {
     struct ssdparams *spp = &ssd->sp;
-    struct write_pointer *wpp = &ssd->wp;
     struct line_mgmt *lm = &ssd->lm;
+    struct write_pointer *wpp = &ruh->wp;
 
     check_addr(wpp->ch, spp->nchs);
     wpp->ch++;
+
     if (wpp->ch == spp->nchs) {
         wpp->ch = 0;
         check_addr(wpp->lun, spp->luns_per_ch);
         wpp->lun++;
+
         /* in this case, we should go to next lun */
         if (wpp->lun == spp->luns_per_ch) {
             wpp->lun = 0;
             /* go to next page in the block */
             check_addr(wpp->pg, spp->pgs_per_blk);
             wpp->pg++;
+
             if (wpp->pg == spp->pgs_per_blk) {
                 wpp->pg = 0;
                 /* move current line to {victim,full} line list */
@@ -190,15 +213,17 @@ static void ssd_advance_write_pointer(struct ssd *ssd)
                     pqueue_insert(lm->victim_line_pq, wpp->curline);
                     lm->victim_line_cnt++;
                 }
+
                 /* current line is used up, pick another empty line */
                 check_addr(wpp->blk, spp->blks_per_pl);
                 wpp->curline = NULL;
-                wpp->curline = get_next_free_line(ssd);
+                wpp->curline = get_next_free_line(ssd, ruh);
                 if (!wpp->curline) {
                     /* TODO */
                     abort();
                 }
                 wpp->blk = wpp->curline->id;
+
                 check_addr(wpp->blk, spp->blks_per_pl);
                 /* make sure we are starting from page 0 in the super block */
                 ftl_assert(wpp->pg == 0);
@@ -211,9 +236,9 @@ static void ssd_advance_write_pointer(struct ssd *ssd)
     }
 }
 
-static struct ppa get_new_page(struct ssd *ssd)
+static struct ppa get_new_page(struct ssd *ssd, struct ru_handle *ruh)
 {
-    struct write_pointer *wpp = &ssd->wp;
+    struct write_pointer *wpp = &ruh->wp;
     struct ppa ppa;
     ppa.ppa = 0;
     ppa.g.ch = wpp->ch;
@@ -297,7 +322,7 @@ static void ssd_init_fdp_params(struct ssd *ssd)
 
     fspp->nrg = 1;
     fspp->nruh = 2;
-    fspp->runs = 1024 * 1024 * 1024;
+    fspp->runs = 64 * 1024 * 1024;
     fspp->rus_per_rg = (uint64_t)spp->tt_secs * spp->secsz / fspp->runs / fspp->nrg;
     fspp->tt_rus = fspp->rus_per_rg * fspp->nrg;
     fspp->lbafi = NVME_ID_NS_FLBAS_INDEX(ssd->ns->id_ns.flbas);
@@ -305,7 +330,7 @@ static void ssd_init_fdp_params(struct ssd *ssd)
 
     endgrp->fdp.enabled = true;
 
-    printf("[FEMU] ssd_init_params; tt_sz: %lud, rus_per_rg: %d, tt_rus: %d, ruamw: %lu\n",
+    printf("[FEMU] ssd_init_fdp_params; tt_sz: %lu, rus_per_rg: %d, tt_rus: %d, ruamw: %lu\n",
            (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->ruamw);
 }
 
@@ -411,8 +436,9 @@ void ssd_init(FemuCtrl *n)
     /* initialize all the lines */
     ssd_init_lines(ssd);
 
+    ssd_init_ruhs(ssd);
+
     /* initialize write pointer, this is how we allocate new pages for writes */
-    ssd_init_write_pointer(ssd);
 
     qemu_thread_create(&ssd->ftl_thread, "FEMU-FTL-Thread", ftl_thread, n,
                        QEMU_THREAD_JOINABLE);
@@ -658,10 +684,11 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
 {
     struct ppa new_ppa;
     struct nand_lun *new_lun;
+    struct line *line = get_line(ssd, old_ppa);
     uint64_t lpn = get_rmap_ent(ssd, old_ppa);
 
     ftl_assert(valid_lpn(ssd, lpn));
-    new_ppa = get_new_page(ssd);
+    new_ppa = get_new_page(ssd, line->ruh);
     /* update maptbl */
     set_maptbl_ent(ssd, lpn, &new_ppa);
     /* update rmap */
@@ -672,7 +699,7 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
     nvme_fdp_stat_inc(&ssd->endgrp->fdp.mbmw, 1);
 
     /* need to advance the write pointer here */
-    ssd_advance_write_pointer(ssd);
+    ssd_advance_write_pointer(ssd, line->ruh);
 
     if (ssd->sp.enable_gc_delay) {
         struct nand_cmd gcw;
@@ -745,6 +772,7 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
     struct line *line = get_line(ssd, ppa);
     line->ipc = 0;
     line->vpc = 0;
+    line->ruh = NULL;
     /* move this line to free line list */
     QTAILQ_INSERT_TAIL(&lm->free_line_list, line, entry);
     lm->free_line_cnt++;
@@ -843,7 +871,14 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     uint64_t lpn;
     uint64_t curlat = 0, maxlat = 0;
     int r;
+
     NvmeNamespace *ns = req->ns;
+    NvmeRwCmd *rw = (NvmeRwCmd *)&req->cmd;
+    uint32_t dw12 = le32_to_cpu(req->cmd.cdw12);
+    uint8_t dtype = (dw12 >> 20) & 0xf;
+    uint16_t pid = le16_to_cpu((rw->dsmgmt >> 16) & 0xffff);
+    uint16_t phid, rgid, ruhid;
+    struct ru_handle *ruh;
 
     if (end_lpn >= spp->tt_pgs) {
         printf("[FEMU] ssd_write; start_lpn: %"PRIu64", tt_pgs: %d\n", start_lpn, ssd->sp.tt_pgs);
@@ -856,6 +891,15 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
             break;
     }
 
+    if (dtype != NVME_DIRECTIVE_DATA_PLACEMENT ||
+        !nvme_parse_pid(ns, pid, &phid, &rgid)) {
+        phid = 0;
+        rgid = 0;
+    }
+
+    ruhid = ns->fdp.phs[phid];
+    ruh = &ssd->ruhs[ruhid];
+
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
         ppa = get_maptbl_ent(ssd, lpn);
         if (mapped_ppa(&ppa)) {
@@ -865,7 +909,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         }
 
         /* new write */
-        ppa = get_new_page(ssd);
+        ppa = get_new_page(ssd, ruh);
         /* update maptbl */
         set_maptbl_ent(ssd, lpn, &ppa);
         /* update rmap */
@@ -873,12 +917,11 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 
         mark_page_valid(ssd, &ppa);
 
-
         nvme_fdp_stat_inc(&ns->endgrp->fdp.hbmw, 1);
         nvme_fdp_stat_inc(&ns->endgrp->fdp.mbmw, 1);
 
         /* need to advance the write pointer here */
-        ssd_advance_write_pointer(ssd);
+        ssd_advance_write_pointer(ssd, ruh);
 
         struct nand_cmd swr;
         swr.type = USER_IO;
