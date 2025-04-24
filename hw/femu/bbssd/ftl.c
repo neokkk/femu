@@ -289,6 +289,26 @@ static void ssd_init_params(struct ssdparams *spp, FemuCtrl *n)
     check_params(spp);
 }
 
+static void ssd_init_fdp_params(struct ssd *ssd)
+{
+    struct ssdparams *spp = &ssd->sp;
+    struct fdp_ssdparams *fspp = &ssd->fsp;
+    struct NvmeEnduranceGroup *endgrp = ssd->endgrp;
+
+    fspp->nrg = 1;
+    fspp->nruh = 2;
+    fspp->runs = 1024 * 1024 * 1024;
+    fspp->rus_per_rg = (uint64_t)spp->tt_secs * spp->secsz / fspp->runs / fspp->nrg;
+    fspp->tt_rus = fspp->rus_per_rg * fspp->nrg;
+    fspp->lbafi = NVME_ID_NS_FLBAS_INDEX(ssd->ns->id_ns.flbas);
+    fspp->ruamw = endgrp->fdp.runs >> ssd->ns->id_ns.lbaf->lbads;
+
+    endgrp->fdp.enabled = true;
+
+    printf("[FEMU] ssd_init_params; tt_sz: %lud, rus_per_rg: %d, tt_rus: %d, ruamw: %lu\n",
+           (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->ruamw);
+}
+
 static void ssd_init_nand_page(struct nand_page *pg, struct ssdparams *spp)
 {
     pg->nsecs = spp->secs_per_pg;
@@ -370,7 +390,11 @@ void ssd_init(FemuCtrl *n)
 
     ftl_assert(ssd);
 
+    ssd->endgrp = &n->endgrp;
+    ssd->ns = &n->namespaces[0];
+
     ssd_init_params(spp, n);
+    ssd_init_fdp_params(ssd);
 
     /* initialize ssd internal layout architecture */
     ssd->ch = g_malloc0(sizeof(struct ssd_channel) * spp->nchs);
@@ -645,6 +669,8 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
 
     mark_page_valid(ssd, &new_ppa);
 
+    nvme_fdp_stat_inc(&ssd->endgrp->fdp.mbmw, 1);
+
     /* need to advance the write pointer here */
     ssd_advance_write_pointer(ssd);
 
@@ -817,6 +843,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     uint64_t lpn;
     uint64_t curlat = 0, maxlat = 0;
     int r;
+    NvmeNamespace *ns = req->ns;
 
     if (end_lpn >= spp->tt_pgs) {
         printf("[FEMU] ssd_write; start_lpn: %"PRIu64", tt_pgs: %d\n", start_lpn, ssd->sp.tt_pgs);
@@ -845,6 +872,10 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         set_rmap_ent(ssd, lpn, &ppa);
 
         mark_page_valid(ssd, &ppa);
+
+
+        nvme_fdp_stat_inc(&ns->endgrp->fdp.hbmw, 1);
+        nvme_fdp_stat_inc(&ns->endgrp->fdp.mbmw, 1);
 
         /* need to advance the write pointer here */
         ssd_advance_write_pointer(ssd);

@@ -348,11 +348,41 @@ static void nvme_ns_init_identify(FemuCtrl *n, NvmeIdNs *id_ns)
     }
 }
 
+static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
+{
+    NvmeEnduranceGroup *endgrp = ns->endgrp = &n->endgrp;
+    g_autofree unsigned int *ruhids = NULL;
+    unsigned int *ruhid;
+    uint16_t *ph;
+    int nphs = 2;
+
+    printf("[FEMU] nvme_ns_init_fdp\n");
+
+    endgrp->fdp.nrg = 1;
+    endgrp->fdp.nruh = 2;
+    endgrp->fdp.runs = 64 * 1024 * 1024;
+
+    ns->fdp.nphs = nphs;
+
+    ruhid = ruhids = g_new0(unsigned int, endgrp->fdp.nruh);
+    ruhids[0] = 0;
+    ruhids[1] = 1;
+    ph = ns->fdp.phs = g_new(uint16_t, ns->fdp.nphs);
+
+    for (unsigned int i = 0; i < ns->fdp.nphs; i++, ruhid++, ph++) {
+        *ph = *ruhid;
+    }
+
+    return true;
+}
+
 static int nvme_init_namespace(FemuCtrl *n, NvmeNamespace *ns, Error **errp)
 {
     NvmeIdNs *id_ns = &ns->id_ns;
     uint64_t num_blks;
     int lba_index;
+
+    printf("[FEMU] nvme_init_namespace\n");
 
     nvme_ns_init_identify(n, id_ns);
 
@@ -365,6 +395,8 @@ static int nvme_init_namespace(FemuCtrl *n, NvmeNamespace *ns, Error **errp)
     ns->ns_blks = ns_blks(ns, lba_index);
     ns->util = bitmap_new(num_blks);
     ns->uncorrectable = bitmap_new(num_blks);
+
+    nvme_ns_init_fdp(n, ns);
 
     return 0;
 }

@@ -156,6 +156,18 @@ struct ssdparams {
     int tt_luns;      /* total # of LUNs in the SSD */
 };
 
+struct fdp_ssdparams {
+    uint16_t nrg;
+    uint16_t nruh;
+    uint64_t runs;
+    uint16_t rus_per_rg; // (tt_sec * secsz) / runs / nrg;
+    uint16_t tt_rus; // rus_per_rg * nrg
+
+    // namespace
+    uint8_t lbafi;
+    uint64_t ruamw;
+};
+
 typedef struct line {
     int id;  /* line id, the same as corresponding block id */
     int ipc; /* invalid page count in this line */
@@ -197,11 +209,15 @@ struct nand_cmd {
 struct ssd {
     char *ssdname;
     struct ssdparams sp;
+    struct fdp_ssdparams fsp;
     struct ssd_channel *ch;
     struct ppa *maptbl; /* page level mapping table */
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
     struct write_pointer wp;
     struct line_mgmt lm;
+
+    NvmeEnduranceGroup *endgrp;
+    NvmeNamespace *ns;
 
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;

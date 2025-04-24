@@ -861,9 +861,10 @@ static uint16_t nvme_fdp_stats(FemuCtrl *n, NvmeCmd *cmd, uint8_t csi,
 {
     uint64_t prp1 = le64_to_cpu(cmd->dptr.prp1);
     uint64_t prp2 = le64_to_cpu(cmd->dptr.prp2);
-    NvmeEnduranceGroup *endgrp;
+    NvmeEnduranceGroup *endgrp = &n->endgrp;
     NvmeFdpStatsLog log = {};
     uint32_t trans_len;
+    double waf;
 
     printf("[FEMU] nvme_fdp_stats; off: %" PRIu64 ", csi: %d, enabled: %d\n", off, (int)csi, n->endgrp.fdp.enabled);
 
@@ -877,14 +878,15 @@ static uint16_t nvme_fdp_stats(FemuCtrl *n, NvmeCmd *cmd, uint8_t csi,
         return NVME_FDP_DISABLED | NVME_DNR;
     }
 
-    endgrp = &n->endgrp;
     trans_len = MIN(sizeof(log) - off, buf_len);
 
     log.hbmw[0] = cpu_to_le64(endgrp->fdp.hbmw);
     log.mbmw[0] = cpu_to_le64(endgrp->fdp.mbmw);
     log.mbe[0] = cpu_to_le64(endgrp->fdp.mbe);
 
-    printf("[FEMU] nvme_fdp_stats; hbmw: %" PRIu64 ", mbmw: %" PRIu64 "\n", log.hbmw[0], log.mbmw[0]);
+    waf = (double)log.mbmw[0] / log.hbmw[0];
+
+    printf("waf: %.2f (hbmw: %" PRIu64 ", mbmw: %" PRIu64 ")\n", waf, log.hbmw[0], log.mbmw[0]);
 
     return dma_write_prp(n, ((uint8_t *)&log) + off, trans_len, prp1, prp2);
 }
