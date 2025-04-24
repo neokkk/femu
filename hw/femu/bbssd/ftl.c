@@ -143,9 +143,12 @@ static struct line *get_next_free_line(struct ssd *ssd)
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
 
+    printf("[FEMU] get_next_free_line; free_line_cnt: %d, victim_line_cnt: %d, full_line_cnt: %d\n",
+           lm->free_line_cnt, lm->victim_line_cnt, lm->full_line_cnt);
+
     curline = QTAILQ_FIRST(&lm->free_line_list);
     if (!curline) {
-        ftl_err("No free lines left in [%s] !!!!\n", ssd->ssdname);
+        printf("[FEMU] no free lines left\n");
         return NULL;
     }
 
@@ -518,7 +521,7 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
         break;
 
     default:
-        ftl_err("Unsupported NAND command: 0x%x\n", c);
+        printf("[FEMU] unsupported NAND command: 0x%x\n", c);
     }
 
     return lat;
@@ -735,7 +738,7 @@ static int do_gc(struct ssd *ssd, bool force)
     }
 
     ppa.g.blk = victim_line->id;
-    ftl_debug("GC-ing line:%d,ipc=%d,victim=%d,full=%d,free=%d\n", ppa.g.blk,
+    printf("[FEMU] do_gc; line: %d, ipc: %d, victim: %d, full: %d, free: %d\n", ppa.g.blk,
               victim_line->ipc, ssd->lm.victim_line_cnt, ssd->lm.full_line_cnt,
               ssd->lm.free_line_cnt);
 
@@ -779,7 +782,7 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     uint64_t sublat, maxlat = 0;
 
     if (end_lpn >= spp->tt_pgs) {
-        ftl_err("start_lpn=%"PRIu64",tt_pgs=%d\n", start_lpn, ssd->sp.tt_pgs);
+        printf("[FEMU] ssd_read; start_lpn: %"PRIu64", tt_pgs: %d\n", start_lpn, ssd->sp.tt_pgs);
     }
 
     /* normal IO read path */
@@ -816,7 +819,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     int r;
 
     if (end_lpn >= spp->tt_pgs) {
-        ftl_err("start_lpn=%"PRIu64",tt_pgs=%d\n", start_lpn, ssd->sp.tt_pgs);
+        printf("[FEMU] ssd_write; start_lpn: %"PRIu64", tt_pgs: %d\n", start_lpn, ssd->sp.tt_pgs);
     }
 
     while (should_gc_high(ssd)) {
@@ -882,7 +885,7 @@ static void *ftl_thread(void *arg)
 
             rc = femu_ring_dequeue(ssd->to_ftl[i], (void *)&req, 1);
             if (rc != 1) {
-                printf("FEMU: FTL to_ftl dequeue failed\n");
+                printf("[FEMU] to_ftl dequeue failed\n");
             }
 
             ftl_assert(req);
@@ -897,7 +900,7 @@ static void *ftl_thread(void *arg)
                 lat = 0;
                 break;
             default:
-                //ftl_err("FTL received unkown request type, ERROR\n");
+                //printf("FTL received unkown request type, ERROR\n");
                 ;
             }
 
@@ -906,7 +909,7 @@ static void *ftl_thread(void *arg)
 
             rc = femu_ring_enqueue(ssd->to_poller[i], (void *)&req, 1);
             if (rc != 1) {
-                ftl_err("FTL to_poller enqueue failed\n");
+                printf("[FEMU] to_poller enqueue failed\n");
             }
 
             /* clean one line if needed (in the background) */
