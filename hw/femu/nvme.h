@@ -17,6 +17,7 @@
 #include "inc/pqueue.h"
 #include "nand/nand.h"
 #include "timing-model/timing.h"
+#include <stdbool.h>
 
 #define NVME_ID_NS_LBADS(ns)                                                  \
     ((ns)->id_ns.lbaf[NVME_ID_NS_FLBAS_INDEX((ns)->id_ns.flbas)].lbads)
@@ -816,6 +817,7 @@ typedef struct NvmeFeatureVal {
     uint32_t    *int_vector_config;
     uint32_t    write_atomicity;
     uint32_t    async_config;
+    bool        fdp_enable;
     uint32_t    sw_prog_marker;
 } NvmeFeatureVal;
 
@@ -842,6 +844,7 @@ enum NvmeFeatureIds {
     NVME_WRITE_ATOMICITY            = 0xa,
     NVME_ASYNCHRONOUS_EVENT_CONF    = 0xb,
     NVME_TIMESTAMP                  = 0xe,
+    NVME_FDP_ENABLE                 = 0x1d,
     NVME_SOFTWARE_PROGRESS_MARKER   = 0x80,
     NVME_FID_MAX                    = 0x100
 };
@@ -1645,6 +1648,20 @@ static inline void nvme_fdp_stat_dec(uint64_t *a, uint64_t b)
 {
     uint64_t ret = *a - b;
     *a = ret > *a ? 0 : ret;
+}
+
+[[maybe_unused]]
+static bool nvme_fdp_reset_stats(FemuCtrl *n)
+{
+    NvmeEnduranceGroup *endgrp = &n->endgrp;
+    printf("[FEMU] nvme_fdp_reset_stats\n");
+    if (!n->endgrp.fdp.enabled) {
+        return false;
+    }
+    endgrp->fdp.hbmw = 0;
+    endgrp->fdp.mbmw = 0;
+    endgrp->fdp.mbe = 0;
+    return true;
 }
 
 #define MN_MAX_LEN (64)

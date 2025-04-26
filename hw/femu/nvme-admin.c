@@ -675,6 +675,9 @@ static uint16_t nvme_get_feature(FemuCtrl *n, NvmeCmd *cmd, NvmeCqe *cqe)
     case NVME_ASYNCHRONOUS_EVENT_CONF:
         cqe->n.result = cpu_to_le32(n->features.async_config);
         break;
+    case NVME_FDP_ENABLE:
+        cqe->n.result = cpu_to_le32(n->features.fdp_enable);
+        break;
     case NVME_SOFTWARE_PROGRESS_MARKER:
         cqe->n.result = cpu_to_le32(n->features.sw_prog_marker);
         break;
@@ -690,6 +693,7 @@ static uint16_t nvme_set_feature(FemuCtrl *n, NvmeCmd *cmd, NvmeCqe *cqe)
     NvmeRangeType *rt;
     uint32_t dw10 = le32_to_cpu(cmd->cdw10);
     uint32_t dw11 = le32_to_cpu(cmd->cdw11);
+    uint32_t dw12 = le32_to_cpu(cmd->cdw12);
     uint32_t nsid = le32_to_cpu(cmd->nsid);
     uint64_t prp1 = le64_to_cpu(cmd->dptr.prp1);
     uint64_t prp2 = le64_to_cpu(cmd->dptr.prp2);
@@ -744,6 +748,14 @@ static uint16_t nvme_set_feature(FemuCtrl *n, NvmeCmd *cmd, NvmeCqe *cqe)
         break;
     case NVME_ASYNCHRONOUS_EVENT_CONF:
         n->features.async_config = dw11;
+        break;
+    case NVME_FDP_ENABLE:
+        bool enable = dw12 & 0x1;
+        printf("nvme_set_feature; fdp_enable: %d\n", enable);
+        n->features.fdp_enable = enable;
+        if (enable) {
+            nvme_fdp_reset_stats(n);
+        }
         break;
     case NVME_SOFTWARE_PROGRESS_MARKER:
         n->features.sw_prog_marker = dw11;
@@ -884,7 +896,7 @@ static uint16_t nvme_fdp_stats(FemuCtrl *n, NvmeCmd *cmd, uint8_t csi,
     log.mbmw[0] = cpu_to_le64(endgrp->fdp.mbmw);
     log.mbe[0] = cpu_to_le64(endgrp->fdp.mbe);
 
-    waf = (double)log.mbmw[0] / log.hbmw[0];
+    waf = log.hbmw[0] == 0 ? 0 : (double)log.mbmw[0] / log.hbmw[0];
 
     printf("waf: %.2f (hbmw: %" PRIu64 ", mbmw: %" PRIu64 ")\n", waf, log.hbmw[0], log.mbmw[0]);
 

@@ -183,6 +183,9 @@ static void ssd_advance_write_pointer(struct ssd *ssd, struct ru_handle *ruh)
     struct line_mgmt *lm = &ssd->lm;
     struct write_pointer *wpp = &ruh->wp;
 
+    printf("[FEMU] ssd_advance_write_pointer; ch: %d, lun: %d, blk: %d, pg: %d\n",
+           wpp->ch, wpp->lun, wpp->blk, wpp->pg);
+
     check_addr(wpp->ch, spp->nchs);
     wpp->ch++;
 
@@ -874,8 +877,8 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 
     NvmeNamespace *ns = req->ns;
     NvmeRwCmd *rw = (NvmeRwCmd *)&req->cmd;
-    uint32_t dw12 = le32_to_cpu(req->cmd.cdw12);
-    uint8_t dtype = (dw12 >> 20) & 0xf;
+    // uint32_t dw12 = le32_to_cpu(req->cmd.cdw12);
+    // uint8_t dtype = (dw12 >> 20) & 0xf;
     uint16_t pid = le16_to_cpu((rw->dsmgmt >> 16) & 0xffff);
     uint16_t phid, rgid, ruhid;
     struct ru_handle *ruh;
@@ -891,14 +894,17 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
             break;
     }
 
-    if (dtype != NVME_DIRECTIVE_DATA_PLACEMENT ||
-        !nvme_parse_pid(ns, pid, &phid, &rgid)) {
+    // if (dtype != NVME_DIRECTIVE_DATA_PLACEMENT ||
+    if (!nvme_parse_pid(ns, pid, &phid, &rgid)) {
+        printf("fail to parse pid\n");
         phid = 0;
         rgid = 0;
     }
 
     ruhid = ns->fdp.phs[phid];
     ruh = &ssd->ruhs[ruhid];
+
+    // printf("[FEMU] ssd_write; pid: %"PRIu16", ruhid: %"PRIu16", rgid: %"PRIu16"\n", pid, ruhid, rgid);
 
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
         ppa = get_maptbl_ent(ssd, lpn);
