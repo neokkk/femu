@@ -597,6 +597,8 @@ static uint16_t nvme_identify(FemuCtrl *n, NvmeCmd *cmd)
     NvmeIdentify *c = (NvmeIdentify *)cmd;
     uint32_t cns  = le32_to_cpu(c->cns);
 
+    printf("[FEMU] nvme_identify; cns: %d\n", cns);
+
     switch (cns) {
     case NVME_ID_CNS_NS:
     case NVME_ID_CNS_NS_PRESENT:
@@ -1079,6 +1081,8 @@ static uint16_t nvme_format(FemuCtrl *n, NvmeCmd *cmd)
 
 static uint16_t nvme_admin_cmd(FemuCtrl *n, NvmeCmd *cmd, NvmeCqe *cqe)
 {
+    printf("[FEMU] nvme_admin_cmd; cmd: %d\n", cmd->opcode);
+
     switch (cmd->opcode) {
     case NVME_ADM_CMD_FEMU_DEBUG:
         n->upg_rd_lat_ns = le64_to_cpu(cmd->cdw10);

@@ -340,6 +340,8 @@ enum NvmeIoCommands {
     NVME_CMD_COMPARE            = 0x05,
     NVME_CMD_WRITE_ZEROES       = 0x08,
     NVME_CMD_DSM                = 0x09,
+    NVME_CMD_VERIFY             = 0x0c,
+    NVME_CMD_IO_MGMT_RECV       = 0x12,
     NVME_CMD_ZONE_MGMT_SEND     = 0x79,
     NVME_CMD_ZONE_MGMT_RECV     = 0x7a,
     NVME_CMD_ZONE_APPEND        = 0x7d,
@@ -372,6 +374,91 @@ enum NvmeRuhAttributes {
 enum NvmeRuhType {
     NVME_RUHT_INITIALLY_ISOLATED = 1,
     NVME_RUHT_PERSISTENTLY_ISOLATED = 2,
+};
+
+typedef struct NvmeRuhStatus {
+    uint8_t  rsvd0[14];
+    uint16_t nruhsd;
+} NvmeRuhStatus;
+
+typedef struct NvmeRuhStatusDescr {
+    uint16_t pid;
+    uint16_t ruhid;
+    uint32_t earutr;
+    uint64_t ruamw;
+    uint8_t  rsvd16[16];
+} NvmeRuhStatusDescr;
+
+typedef struct QEMU_PACKED NvmeRuhuDescr {
+    uint8_t ruha;
+    uint8_t rsvd1[7];
+} NvmeRuhuDescr;
+
+typedef struct QEMU_PACKED NvmeFdpStatsLog {
+    uint64_t hbmw[2];
+    uint64_t mbmw[2];
+    uint64_t mbe[2];
+    uint8_t  rsvd48[16];
+} NvmeFdpStatsLog;
+
+typedef struct QEMU_PACKED NvmeFdpEventsLog {
+    uint32_t num_events;
+    uint8_t  rsvd4[60];
+} NvmeFdpEventsLog;
+
+enum NvmeFdpEventType {
+    FDP_EVT_RU_NOT_FULLY_WRITTEN = 0x0,
+    FDP_EVT_RU_ATL_EXCEEDED = 0x1,
+    FDP_EVT_CTRL_RESET_RUH = 0x2,
+    FDP_EVT_INVALID_PID = 0x3,
+    FDP_EVT_MEDIA_REALLOC = 0x80,
+    FDP_EVT_RUH_IMPLICIT_RU_CHANGE = 0x81,
+};
+
+enum NvmeFdpEventFlags {
+    FDPEF_PIV = 1 << 0,
+    FDPEF_NSIDV = 1 << 1,
+    FDPEF_LV = 1 << 2,
+};
+
+typedef struct QEMU_PACKED NvmeFdpEvent {
+    uint8_t  type;
+    uint8_t  flags;
+    uint16_t pid;
+    uint64_t timestamp;
+    uint32_t nsid;
+    uint64_t type_specific[2];
+    uint16_t rgid;
+    uint8_t  ruhid;
+    uint8_t  rsvd35[5];
+    uint64_t vendor[3];
+} NvmeFdpEvent;
+
+typedef struct QEMU_PACKED NvmePhidList {
+    uint16_t nnruhd;
+    uint8_t  rsvd2[6];
+} NvmePhidList;
+
+typedef struct QEMU_PACKED NvmePhidDescr {
+    uint8_t  ruht;
+    uint8_t  rsvd1;
+    uint16_t ruhid;
+} NvmePhidDescr;
+
+typedef struct QEMU_PACKED NvmeFdpEventDescr {
+    uint8_t evt;
+    uint8_t evta;
+} NvmeFdpEventDescr;
+
+enum NvmeIomr2Mo {
+    NVME_IOMR_MO_NOP = 0x0,
+    NVME_IOMR_MO_RUH_STATUS = 0x1,
+    NVME_IOMR_MO_VENDOR_SPECIFIC = 0x255,
+};
+
+enum NvmeIoms2Mo {
+    NVME_IOMS_MO_NOP = 0x0,
+    NVME_IOMS_MO_RUH_UPDATE = 0x1,
 };
 
 typedef struct NvmeDeleteQ {
@@ -1083,6 +1170,21 @@ typedef struct Oc12Ctrl Oc12Ctrl;
 typedef struct NvmeIdNsZoned NvmeIdNsZoned;
 typedef struct NvmeZone NvmeZone;
 
+typedef struct NvmeReclaimUnit {
+    uint64_t ruamw;
+} NvmeReclaimUnit;
+
+typedef struct NvmeRuHandle {
+    uint8_t  ruht;
+    uint8_t  ruha;
+    uint64_t event_filter;
+    uint8_t  lbafi;
+    uint64_t ruamw;
+
+    /* reclaim units indexed by reclaim group */
+    NvmeReclaimUnit *rus;
+} NvmeRuHandle;
+
 typedef struct NvmeEnduranceGroup {
     uint8_t event_conf;
 
@@ -1099,6 +1201,8 @@ typedef struct NvmeEnduranceGroup {
         uint64_t mbe;
 
         bool enabled;
+
+        NvmeRuHandle *ruhs;
     } fdp;
 } NvmeEnduranceGroup;
 

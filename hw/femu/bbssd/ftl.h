@@ -191,6 +191,7 @@ struct write_pointer {
 };
 
 typedef struct ru_handle {
+    int id;
     // QTAILQ_HEAD(lines, line) lines;
     struct line *line; // current line ptr
     struct write_pointer wp;

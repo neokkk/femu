@@ -272,6 +272,21 @@ static uint64_t nvme_cmb_read(void *opaque, hwaddr addr, unsigned size)
     return val;
 }
 
+static NvmeRuHandle *nvme_find_ruh_by_attr(NvmeEnduranceGroup *endgrp,
+                                           uint8_t ruha, uint16_t *ruhid)
+{
+    for (uint16_t i = 0; i < endgrp->fdp.nruh; i++) {
+        NvmeRuHandle *ruh = &endgrp->fdp.ruhs[i];
+
+        if (ruh->ruha == ruha) {
+            *ruhid = i;
+            return ruh;
+        }
+    }
+
+    return NULL;
+}
+
 static const MemoryRegionOps nvme_cmb_ops = {
     .read = nvme_cmb_read,
     .write = nvme_cmb_write,
@@ -351,48 +366,130 @@ static void nvme_ns_init_identify(FemuCtrl *n, NvmeIdNs *id_ns)
 static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
 {
     NvmeEnduranceGroup *endgrp = ns->endgrp = &n->endgrp;
+    NvmeRuHandle *ruh;
+    uint8_t lbafi = NVME_ID_NS_FLBAS_INDEX(ns->id_ns.flbas);
     g_autofree unsigned int *ruhids = NULL;
     unsigned int *ruhid;
     uint16_t *ph;
-    int nphs = 2;
-
-    printf("[FEMU] nvme_ns_init_fdp\n");
+    int nphs = 8;
 
     endgrp->fdp.nrg = 1;
-    endgrp->fdp.nruh = 2;
+    endgrp->fdp.nruh = 8;
     endgrp->fdp.runs = 64 * 1024 * 1024;
+    endgrp->fdp.ruhs = g_new(NvmeRuHandle, endgrp->fdp.nruh);
+
+    printf("[FEMU] nvme_ns_init_fdp; nrg: %d, nruh: %d, nph: %d\n", endgrp->fdp.nrg, endgrp->fdp.nruh, nphs);
+
+    for (uint16_t i = 0; i < endgrp->fdp.nruh; i++) {
+        endgrp->fdp.ruhs[i] = (NvmeRuHandle) {
+            .ruht = NVME_RUHT_INITIALLY_ISOLATED,
+            .ruha = NVME_RUHA_UNUSED,
+        };
+
+        endgrp->fdp.ruhs[i].rus = g_new(NvmeReclaimUnit, endgrp->fdp.nrg);
+    }
 
     ns->fdp.nphs = nphs;
 
+    endgrp->fdp.enabled = true;
+
+    if (!endgrp->fdp.ruhs) {
+        ns->fdp.nphs = 1;
+        ph = ns->fdp.phs = g_new(uint16_t, 1);
+
+        ruh = nvme_find_ruh_by_attr(endgrp, NVME_RUHA_CTRL, ph);
+        if (!ruh) {
+            ruh = nvme_find_ruh_by_attr(endgrp, NVME_RUHA_UNUSED, ph);
+            if (!ruh) {
+                printf("[FEMU] no unused reclaim unit handles left\n");
+                return false;
+            }
+
+            ruh->ruha = NVME_RUHA_CTRL;
+            ruh->lbafi = lbafi;
+            ruh->ruamw = endgrp->fdp.runs >> ns->id_ns.lbaf[lbafi].lbads;
+
+            for (uint16_t rg = 0; rg < endgrp->fdp.nrg; rg++) {
+                ruh->rus[rg].ruamw = ruh->ruamw;
+            }
+        } else if (ruh->lbafi != lbafi) {
+            printf("[FEMU] lba format index of controller assigned "
+                       "reclaim unit handle does not match namespace lba "
+                       "format index");
+            return false;
+        }
+
+        return true;
+    }
+
     ruhid = ruhids = g_new0(unsigned int, endgrp->fdp.nruh);
-    ruhids[0] = 0;
-    ruhids[1] = 1;
+    //> nk; TODO: user input
+    for (int i = 0; i < endgrp->fdp.nruh; i++) {
+        ruhids[i] = i;
+    }
     ph = ns->fdp.phs = g_new(uint16_t, ns->fdp.nphs);
 
     for (unsigned int i = 0; i < ns->fdp.nphs; i++, ruhid++, ph++) {
+        if (*ruhid >= endgrp->fdp.nruh) {
+            printf("[FEMU] invalid reclaim unit handle id");
+            return false;
+        }
+
+        ruh = &endgrp->fdp.ruhs[*ruhid];
+
+        switch (ruh->ruha) {
+        case NVME_RUHA_UNUSED:
+            ruh->ruha = NVME_RUHA_HOST;
+            ruh->lbafi = lbafi;
+            ruh->ruamw = endgrp->fdp.runs >> ns->id_ns.lbaf[lbafi].lbads;
+
+            for (uint16_t rg = 0; rg < endgrp->fdp.nrg; rg++) {
+                ruh->rus[rg].ruamw = ruh->ruamw;
+            }
+
+            break;
+
+        case NVME_RUHA_HOST:
+            if (ruh->lbafi != lbafi) {
+                printf("[FEMU] lba format index of host assigned"
+                           "reclaim unit handle does not match namespace "
+                           "lba format index");
+                return false;
+            }
+
+            break;
+
+        case NVME_RUHA_CTRL:
+            printf("[FEMU] reclaim unit handle is controller assigned");
+            return false;
+
+        default:
+            abort();
+        }
+
         *ph = *ruhid;
     }
 
     return true;
 }
 
-static int nvme_init_namespace(FemuCtrl *n, NvmeNamespace *ns, Error **errp)
+static int nvme_init_namespace(FemuCtrl *n, NvmeNamespace *ns)
 {
     NvmeIdNs *id_ns = &ns->id_ns;
     uint64_t num_blks;
-    int lba_index;
+    int lbafi;
 
     printf("[FEMU] nvme_init_namespace\n");
 
     nvme_ns_init_identify(n, id_ns);
 
-    lba_index = NVME_ID_NS_FLBAS_INDEX(ns->id_ns.flbas);
-    num_blks = n->ns_size / ((1 << id_ns->lbaf[lba_index].lbads));
+    lbafi = NVME_ID_NS_FLBAS_INDEX(ns->id_ns.flbas);
+    num_blks = n->ns_size / ((1 << id_ns->lbaf[lbafi].lbads));
     id_ns->nuse = id_ns->ncap = id_ns->nsze = cpu_to_le64(num_blks);
 
     n->csi = NVME_CSI_NVM;
     ns->ctrl = n;
-    ns->ns_blks = ns_blks(ns, lba_index);
+    ns->ns_blks = ns_blks(ns, lbafi);
     ns->util = bitmap_new(num_blks);
     ns->uncorrectable = bitmap_new(num_blks);
 
@@ -414,7 +511,7 @@ static int nvme_init_namespaces(FemuCtrl *n, Error **errp)
         ns->start_block = i * n->ns_size >> BDRV_SECTOR_BITS;
         ns->id = i + 1;
 
-        if (nvme_init_namespace(n, ns, errp)) {
+        if (nvme_init_namespace(n, ns)) {
             return 1;
         }
     }
@@ -428,6 +525,8 @@ static void nvme_init_ctrl(FemuCtrl *n)
     uint8_t *pci_conf = n->parent_obj.config;
     char *subnqn;
     int i;
+
+    printf("[FEMU] nvme_init_ctrl\n");
 
     id->vid = cpu_to_le16(pci_get_word(pci_conf + PCI_VENDOR_ID));
     id->ssvid = cpu_to_le16(pci_get_word(pci_conf + PCI_SUBSYSTEM_VENDOR_ID));

@@ -44,7 +44,6 @@ static uint64_t ppa2pgidx(struct ssd *ssd, struct ppa *ppa)
 static inline uint64_t get_rmap_ent(struct ssd *ssd, struct ppa *ppa)
 {
     uint64_t pgidx = ppa2pgidx(ssd, ppa);
-
     return ssd->rmap[pgidx];
 }
 
@@ -52,7 +51,6 @@ static inline uint64_t get_rmap_ent(struct ssd *ssd, struct ppa *ppa)
 static inline void set_rmap_ent(struct ssd *ssd, uint64_t lpn, struct ppa *ppa)
 {
     uint64_t pgidx = ppa2pgidx(ssd, ppa);
-
     ssd->rmap[pgidx] = lpn;
 }
 
@@ -104,6 +102,7 @@ static void ssd_init_lines(struct ssd *ssd)
         line->ipc = 0;
         line->vpc = 0;
         line->pos = 0;
+        line->ruh = NULL;
         /* initialize all the lines as free lines */
         QTAILQ_INSERT_TAIL(&lm->free_line_list, line, entry);
         lm->free_line_cnt++;
@@ -125,6 +124,9 @@ static void ssd_init_write_pointer(struct ssd *ssd, struct ru_handle *ruh)
 
     curline = QTAILQ_FIRST(&lm->free_line_list);
     curline->ruh = ruh;
+
+    ruh->line = curline;
+
     QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
     lm->free_line_cnt--;
 
@@ -146,6 +148,7 @@ static void ssd_init_ruhs(struct ssd *ssd)
     ssd->ruhs = g_malloc0(sizeof(struct ru_handle) * fspp->nruh);
     for (int i = 0; i < fspp->nruh; i++) {
         ruh = &ssd->ruhs[i];
+        ruh->id = i;
         ruh->line = NULL;
         ssd_init_write_pointer(ssd, ruh);
     }
@@ -170,10 +173,13 @@ static struct line *get_next_free_line(struct ssd *ssd, struct ru_handle *ruh)
         printf("[FEMU] no free lines left\n");
         return NULL;
     }
-
     curline->ruh = ruh;
+
+    ruh->line = curline;
+
     QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
     lm->free_line_cnt--;
+
     return curline;
 }
 
@@ -183,8 +189,8 @@ static void ssd_advance_write_pointer(struct ssd *ssd, struct ru_handle *ruh)
     struct line_mgmt *lm = &ssd->lm;
     struct write_pointer *wpp = &ruh->wp;
 
-    printf("[FEMU] ssd_advance_write_pointer; ch: %d, lun: %d, blk: %d, pg: %d\n",
-           wpp->ch, wpp->lun, wpp->blk, wpp->pg);
+    // printf("[FEMU] ssd_advance_write_pointer; ch: %d, lun: %d, blk: %d, pg: %d\n",
+    //        wpp->ch, wpp->lun, wpp->blk, wpp->pg);
 
     check_addr(wpp->ch, spp->nchs);
     wpp->ch++;
@@ -224,6 +230,7 @@ static void ssd_advance_write_pointer(struct ssd *ssd, struct ru_handle *ruh)
                 if (!wpp->curline) {
                     /* TODO */
                     abort();
+                    return;
                 }
                 wpp->blk = wpp->curline->id;
 
@@ -250,7 +257,6 @@ static struct ppa get_new_page(struct ssd *ssd, struct ru_handle *ruh)
     ppa.g.blk = wpp->blk;
     ppa.g.pl = wpp->pl;
     ftl_assert(ppa.g.pl == 0);
-
     return ppa;
 }
 
@@ -330,8 +336,6 @@ static void ssd_init_fdp_params(struct ssd *ssd)
     fspp->tt_rus = fspp->rus_per_rg * fspp->nrg;
     fspp->lbafi = NVME_ID_NS_FLBAS_INDEX(ssd->ns->id_ns.flbas);
     fspp->ruamw = endgrp->fdp.runs >> ssd->ns->id_ns.lbaf->lbads;
-
-    endgrp->fdp.enabled = true;
 
     printf("[FEMU] ssd_init_fdp_params; tt_sz: %lu, rus_per_rg: %d, tt_rus: %d, ruamw: %lu\n",
            (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->ruamw);
@@ -580,6 +584,17 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
     return lat;
 }
 
+static bool is_line_in_full_list(struct line_mgmt *lm, struct line *target)
+{
+    struct line *iter;
+
+    QTAILQ_FOREACH(iter, &lm->full_line_list, entry) {
+        if (iter == target)
+            return true;
+    }
+    return false;
+}
+
 /* update SSD status about one page from PG_VALID -> PG_INVALID */
 static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
 {
@@ -605,11 +620,13 @@ static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
     /* update corresponding line status */
     line = get_line(ssd, ppa);
     ftl_assert(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
+
     if (line->vpc == spp->pgs_per_line) {
         ftl_assert(line->ipc == 0);
         was_full_line = true;
     }
     line->ipc++;
+
     ftl_assert(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
     /* Adjust the position of the victime line in the pq under over-writes */
     if (line->pos) {
@@ -620,6 +637,12 @@ static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
     }
 
     if (was_full_line) {
+        if (!is_line_in_full_list(lm, line)) {
+            printf("[FEMU] line not in full_line_list! ruh id: %d line id: %d\n", 
+                    line->ruh ? line->ruh->id : -1, line->id);
+            return;
+        }
+
         /* move line: "full" -> "victim" */
         QTAILQ_REMOVE(&lm->full_line_list, line, entry);
         lm->full_line_cnt--;
@@ -863,6 +886,20 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     return maxlat;
 }
 
+[[maybe_unused]]
+static void print_ppa(struct ppa *ppa)
+{
+    printf("[FEMU] ppa; ch: %d, lun: %d, blk: %d, pg: %d\n",
+           ppa->g.ch, ppa->g.lun, ppa->g.blk, ppa->g.pg);
+}
+
+[[maybe_unused]]
+static void print_wp(struct write_pointer *wp)
+{
+    printf("[FEMU] wp; ch: %d, lun: %d, blk: %d, pg: %d\n",
+           wp->ch, wp->lun, wp->blk, wp->pg);
+}
+
 static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 {
     uint64_t lba = req->slba;
@@ -904,8 +941,6 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     ruhid = ns->fdp.phs[phid];
     ruh = &ssd->ruhs[ruhid];
 
-    // printf("[FEMU] ssd_write; pid: %"PRIu16", ruhid: %"PRIu16", rgid: %"PRIu16"\n", pid, ruhid, rgid);
-
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
         ppa = get_maptbl_ent(ssd, lpn);
         if (mapped_ppa(&ppa)) {
@@ -916,6 +951,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 
         /* new write */
         ppa = get_new_page(ssd, ruh);
+
         /* update maptbl */
         set_maptbl_ent(ssd, lpn, &ppa);
         /* update rmap */
@@ -933,6 +969,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         swr.type = USER_IO;
         swr.cmd = NAND_WRITE;
         swr.stime = req->stime;
+
         /* get latency statistics */
         curlat = ssd_advance_status(ssd, &ppa, &swr);
         maxlat = (curlat > maxlat) ? curlat : maxlat;
