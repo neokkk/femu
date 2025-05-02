@@ -583,6 +583,7 @@ void nvme_post_cqes_io(void *opaque)
     }
 }
 
+[[maybe_unused]]
 static bool nvme_update_ruh(NvmeNamespace *ns, uint16_t pid)
 {
     NvmeEnduranceGroup *endgrp = ns->endgrp;

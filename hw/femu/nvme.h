@@ -1239,18 +1239,6 @@ typedef struct NvmeNamespace {
     void *state;
 } NvmeNamespace;
 
-typedef struct QEMU_PACKED NvmeRuhuDescr {
-    uint8_t ruha;
-    uint8_t rsvd1[7];
-} NvmeRuhuDescr;
-
-typedef struct QEMU_PACKED NvmeFdpStatsLog {
-    uint64_t hbmw[2];
-    uint64_t mbmw[2];
-    uint64_t mbe[2];
-    uint8_t  rsvd48[16];
-} NvmeFdpStatsLog;
-
 enum NvmeDirectiveTypes {
     NVME_DIRECTIVE_IDENTIFY       = 0x0,
     NVME_DIRECTIVE_DATA_PLACEMENT = 0x2,
@@ -1738,7 +1726,6 @@ static inline bool nvme_parse_pid(NvmeNamespace *ns, uint16_t pid,
 {
     *rg = nvme_pid2rg(ns, pid);
     *ph = nvme_pid2ph(ns, pid);
-
     return nvme_ph_valid(ns, *ph) && nvme_rg_valid(ns->endgrp, *rg);
 }
 

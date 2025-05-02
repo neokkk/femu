@@ -330,7 +330,7 @@ static void ssd_init_fdp_params(struct ssd *ssd)
     struct NvmeEnduranceGroup *endgrp = ssd->endgrp;
 
     fspp->nrg = 1;
-    fspp->nruh = 2;
+    fspp->nruh = 8;
     fspp->runs = 64 * 1024 * 1024;
     fspp->rus_per_rg = (uint64_t)spp->tt_secs * spp->secsz / fspp->runs / fspp->nrg;
     fspp->tt_rus = fspp->rus_per_rg * fspp->nrg;
