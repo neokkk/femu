@@ -1724,9 +1724,13 @@ static inline size_t nvme_m2b(NvmeNamespace *ns, uint64_t lba)
 static inline bool nvme_parse_pid(NvmeNamespace *ns, uint16_t pid,
                                   uint16_t *ph, uint16_t *rg)
 {
+    uint16_t max_rg = ns->endgrp->fdp.nrg, max_ph = ns->fdp.nphs;
     *rg = nvme_pid2rg(ns, pid);
+    *rg %= max_rg;
     *ph = nvme_pid2ph(ns, pid);
-    return nvme_ph_valid(ns, *ph) && nvme_rg_valid(ns->endgrp, *rg);
+    *ph %= max_ph;
+    return true;
+    // return nvme_ph_valid(ns, *ph) && nvme_rg_valid(ns->endgrp, *rg);
 }
 
 static inline void nvme_fdp_stat_inc(uint64_t *a, uint64_t b)
