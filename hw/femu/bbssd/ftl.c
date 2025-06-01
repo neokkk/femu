@@ -102,7 +102,7 @@ static void ssd_init_lines(struct ssd *ssd)
         line->ipc = 0;
         line->vpc = 0;
         line->pos = 0;
-        line->ruh = NULL;
+        line->ru = NULL;
         /* initialize all the lines as free lines */
         QTAILQ_INSERT_TAIL(&lm->free_line_list, line, entry);
         lm->free_line_cnt++;
@@ -121,11 +121,12 @@ static void ssd_init_write_pointer(struct ssd *ssd, struct ru_handle *ruh)
     struct write_pointer *wpp = &ruh->wp;
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
+    struct ru *ru = ruh->ru;
 
     curline = QTAILQ_FIRST(&lm->free_line_list);
-    curline->ruh = ruh;
+    curline->ru = ru;
 
-    ruh->line = curline;
+    ru->line = curline;
 
     QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
     lm->free_line_cnt--;
@@ -143,13 +144,16 @@ static void ssd_init_ruhs(struct ssd *ssd)
 {
     struct fdp_ssdparams *fspp = &ssd->fsp;
     struct ru_handle *ruh;
+    struct ru *ru;
 
     printf("[FEMU] ssd_ruhs\n");
     ssd->ruhs = g_malloc0(sizeof(struct ru_handle) * fspp->nruh);
     for (int i = 0; i < fspp->nruh; i++) {
         ruh = &ssd->ruhs[i];
         ruh->id = i;
-        ruh->line = NULL;
+        ru = ruh->ru = g_malloc0(sizeof(struct ru));
+        ru->ruhid = ruh->id;
+        ru->rgid = 0;
         ssd_init_write_pointer(ssd, ruh);
     }
 }
@@ -163,6 +167,7 @@ static struct line *get_next_free_line(struct ssd *ssd, struct ru_handle *ruh)
 {
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
+    struct ru *ru = ruh->ru;
 
     printf("[FEMU] get_next_free_line; free_line_cnt: %d, victim_line_cnt: %d, full_line_cnt: %d, total_cnt: %d\n",
            lm->free_line_cnt, lm->victim_line_cnt, lm->full_line_cnt,
@@ -173,9 +178,9 @@ static struct line *get_next_free_line(struct ssd *ssd, struct ru_handle *ruh)
         printf("[FEMU] no free lines left\n");
         return NULL;
     }
-    curline->ruh = ruh;
+    curline->ru = ru;
 
-    ruh->line = curline;
+    ru->line = curline;
 
     QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
     lm->free_line_cnt--;
@@ -513,6 +518,12 @@ static inline struct nand_page *get_pg(struct ssd *ssd, struct ppa *ppa)
     return &(blk->pg[ppa->g.pg]);
 }
 
+static inline struct ru_handle *get_ruh(struct ssd *ssd, struct ppa *ppa)
+{
+    struct line *line = get_line(ssd, ppa);
+    return &(ssd->ruhs[line->ru->ruhid]);
+}
+
 static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
         nand_cmd *ncmd)
 {
@@ -638,8 +649,7 @@ static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
 
     if (was_full_line) {
         if (!is_line_in_full_list(lm, line)) {
-            printf("[FEMU] line not in full_line_list! ruh id: %d line id: %d\n", 
-                    line->ruh ? line->ruh->id : -1, line->id);
+            printf("[FEMU] line not in full_line_list! line id: %d\n", line->id);
             return;
         }
 
@@ -710,11 +720,11 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
 {
     struct ppa new_ppa;
     struct nand_lun *new_lun;
-    struct line *line = get_line(ssd, old_ppa);
+    struct ru_handle *ruh = get_ruh(ssd, old_ppa);
     uint64_t lpn = get_rmap_ent(ssd, old_ppa);
 
     ftl_assert(valid_lpn(ssd, lpn));
-    new_ppa = get_new_page(ssd, line->ruh);
+    new_ppa = get_new_page(ssd, ruh);
     /* update maptbl */
     set_maptbl_ent(ssd, lpn, &new_ppa);
     /* update rmap */
@@ -725,7 +735,7 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
     nvme_fdp_stat_inc(&ssd->endgrp->fdp.mbmw, 1);
 
     /* need to advance the write pointer here */
-    ssd_advance_write_pointer(ssd, line->ruh);
+    ssd_advance_write_pointer(ssd, ruh);
 
     if (ssd->sp.enable_gc_delay) {
         struct nand_cmd gcw;
@@ -798,7 +808,7 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
     struct line *line = get_line(ssd, ppa);
     line->ipc = 0;
     line->vpc = 0;
-    line->ruh = NULL;
+    line->ru = NULL;
     /* move this line to free line list */
     QTAILQ_INSERT_TAIL(&lm->free_line_list, line, entry);
     lm->free_line_cnt++;

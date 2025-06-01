@@ -52,6 +52,7 @@ enum {
 #define LUN_BITS    (8)
 #define CH_BITS     (7)
 
+struct ru;
 struct ru_handle;
 
 /* describe a physical page addr */
@@ -177,7 +178,7 @@ typedef struct line {
     QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
     /* position in the priority queue for victim lines */
     size_t pos;
-    struct ru_handle *ruh;
+    struct ru *ru;
 } line;
 
 /* wp: record next write addr */
@@ -190,10 +191,16 @@ struct write_pointer {
     int pl;
 };
 
+typedef struct ru {
+    int ruhid, rgid;
+    struct line *line;
+    uint64_t ruamw;
+} ru;
+
 typedef struct ru_handle {
     int id;
     // QTAILQ_HEAD(lines, line) lines;
-    struct line *line; // current line ptr
+    struct ru *ru; // current line ptr
     struct write_pointer wp;
 } ru_handle;
 
