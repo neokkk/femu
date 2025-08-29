@@ -178,7 +178,7 @@ typedef struct line {
     QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
     /* position in the priority queue for victim lines */
     size_t pos;
-    struct ru *ru;
+    struct ru_handle *ruh;
 } line;
 
 /* wp: record next write addr */
@@ -191,17 +191,12 @@ struct write_pointer {
     int pl;
 };
 
-typedef struct ru {
-    int ruhid, rgid;
-    struct line *line;
-    uint64_t ruamw;
-} ru;
-
 typedef struct ru_handle {
-    int id;
+    int id; // index
     // QTAILQ_HEAD(lines, line) lines;
-    struct ru *ru; // current line ptr
+    struct line *line;
     struct write_pointer wp;
+    uint64_t ruamw;
 } ru_handle;
 
 struct line_mgmt {

@@ -1745,7 +1745,7 @@ static inline void nvme_fdp_stat_dec(uint64_t *a, uint64_t b)
     *a = ret > *a ? 0 : ret;
 }
 
-[[maybe_unused]]
+static bool nvme_fdp_reset_stats(FemuCtrl *n)  __attribute__((unused));
 static bool nvme_fdp_reset_stats(FemuCtrl *n)
 {
     NvmeEnduranceGroup *endgrp = &n->endgrp;
