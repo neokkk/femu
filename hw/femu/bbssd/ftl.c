@@ -1,3 +1,4 @@
+#include <sys/random.h>
 #include "ftl.h"
 
 //#define FEMU_DEBUG_FTL
@@ -144,7 +145,7 @@ static void ssd_init_ruhs(struct ssd *ssd)
     struct fdp_ssdparams *fspp = &ssd->fsp;
     struct ru_handle *ruh;
 
-    printf("[FEMU] ssd_ruhs\n");
+    printf("[FEMU] ssd_ruhs; nruh: %d\n", fspp->nruh);
     ssd->ruhs = g_malloc0(sizeof(struct ru_handle) * fspp->nruh);
     for (int i = 0; i < fspp->nruh; i++) {
         ruh = &ssd->ruhs[i];
@@ -165,9 +166,9 @@ static struct line *get_next_free_line(struct ssd *ssd, struct ru_handle *ruh)
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
 
-    printf("[FEMU] get_next_free_line; free_line_cnt: %d, victim_line_cnt: %d, full_line_cnt: %d, total_cnt: %d\n",
-           lm->free_line_cnt, lm->victim_line_cnt, lm->full_line_cnt,
-           lm->free_line_cnt + lm->victim_line_cnt + lm->full_line_cnt);
+    // printf("[FEMU] get_next_free_line; free_line_cnt: %d, victim_line_cnt: %d, full_line_cnt: %d, total_cnt: %d\n",
+    //        lm->free_line_cnt, lm->victim_line_cnt, lm->full_line_cnt,
+    //        lm->free_line_cnt + lm->victim_line_cnt + lm->full_line_cnt);
 
     curline = QTAILQ_FIRST(&lm->free_line_list);
     if (!curline) {
@@ -520,6 +521,23 @@ static inline struct ru_handle *get_ruh(struct ssd *ssd, struct ppa *ppa)
     return line->ruh;
 }
 
+static inline struct ru_handle **get_ii_ruhs(struct ssd *ssd, int *nruh)
+{
+    int n = ssd->fsp.nruh;
+    int num = 0;
+    struct ru_handle **tmp, **ret;
+    tmp = (struct ru_handle **)malloc(sizeof(struct ru_handle *) * n);
+    for (int i = 0; i < n; i++) {
+        struct ru_handle ruh = ssd->ruhs[i];
+        if (ruh.ruht != NVME_RUHT_INITIALLY_ISOLATED)
+            continue;
+        tmp[num++] = &ruh;
+    }
+    ret = (struct ru_handle **)realloc(tmp, num);
+    *nruh = n;
+    return ret;
+}
+
 static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
         nand_cmd *ncmd)
 {
@@ -700,60 +718,95 @@ static void mark_block_free(struct ssd *ssd, struct ppa *ppa)
 }
 
 enum {
+    RANDOM,
+    SEQUENTIAL,
     RR,
-    GREEDY_IPC,
-    GREEDY_VPC,
+    GREEDY,
+    OVERLAPPED,
     PI, // persistently isolated
 };
 
+static struct ru_handle *select_by_random(struct ssd *ssd, struct ppa *ppa);
+static struct ru_handle *select_by_sequential(struct ssd *ssd, struct ppa *ppa);
 static struct ru_handle *select_by_rr(struct ssd *ssd, struct ppa *ppa);
-static struct ru_handle *select_by_greedy_ipc(struct ssd *ssd, struct ppa *ppa);
-static struct ru_handle *select_by_greedy_vpc(struct ssd *ssd, struct ppa *ppa);
+static struct ru_handle *select_by_greedy(struct ssd *ssd, struct ppa *ppa);
+static struct ru_handle *select_by_overlapped(struct ssd *ssd, struct ppa *ppa);
 static struct ru_handle *select_by_pi(struct ssd *ssd, struct ppa *ppa);
 
 static struct ru_handle *select_ruh(struct ssd *ssd, struct ppa *ppa, uint8_t policy)
 {
     switch (policy) {
+        case RANDOM:
+            return select_by_random(ssd, ppa);
+        case SEQUENTIAL:
+            return select_by_sequential(ssd, ppa);
         case RR:
             return select_by_rr(ssd, ppa);
-        case GREEDY_IPC:
-            return select_by_greedy_ipc(ssd, ppa);
-        case GREEDY_VPC:
-            return select_by_greedy_vpc(ssd, ppa);
+        case GREEDY:
+            return select_by_greedy(ssd, ppa);
+        case OVERLAPPED:
+            return select_by_overlapped(ssd, ppa);
         case PI:
             return select_by_pi(ssd, ppa);
     }
-    return select_by_rr(ssd, ppa);
+    return select_by_random(ssd, ppa);
 }
 
-static struct ru_handle *select_by_rr(struct ssd *ssd, struct ppa *ppa)
+static struct ru_handle *select_by_random(struct ssd *ssd, struct ppa *ppa)
+{
+    int nruh = ssd->fsp.nruh;
+    unsigned int r;
+    if (getrandom(&r, sizeof(r), 0) == -1) {
+        perror("Fail to get random value");
+        return NULL;
+    }
+    r %= nruh;
+    return &(ssd->ruhs[r]);
+}
+
+static struct ru_handle *select_by_sequential(struct ssd *ssd, struct ppa *ppa)
 {
     struct ru_handle *old_ruh = get_ruh(ssd, ppa);
-    int nruhs = ssd->fsp.nruh;
-    int new_ruhid = (old_ruh->id + 1) % nruhs;
+    int nruh = ssd->fsp.nruh;
+    int new_ruhid = (old_ruh->id + 1) % nruh;
     return &(ssd->ruhs[new_ruhid]);
 }
 
-static struct ru_handle *select_by_greedy_ipc(struct ssd *ssd, struct ppa *ppa)
+const uint32_t QUANTUM = 16384;
+static uint32_t counter = 0;
+static struct ru_handle *select_by_rr(struct ssd *ssd, struct ppa *ppa)
 {
-    struct ru_handle *highest_ipc_ruh = &(ssd->ruhs[0]);
-    for (int i = 1; i < ssd->fsp.nruh; i++) {
-        struct ru_handle *current_ruh = &(ssd->ruhs[i]);
-        if (current_ruh->line->ipc > highest_ipc_ruh->line->ipc)
-            highest_ipc_ruh = current_ruh;
+    if (counter < QUANTUM) {
+        counter++;
+        return select_by_pi(ssd, ppa);
     }
-    return highest_ipc_ruh;
+
+    counter = 0;
+    return select_by_sequential(ssd, ppa);
 }
 
-static struct ru_handle *select_by_greedy_vpc(struct ssd *ssd, struct ppa *ppa)
+static struct ru_handle *select_by_greedy(struct ssd *ssd, struct ppa *ppa)
 {
-    struct ru_handle *highest_vpc_ruh = &(ssd->ruhs[0]);
+    struct ru_handle *lightest_ruh = &(ssd->ruhs[0]);
+    int lightest_fpc = ssd->sp.pgs_per_line - lightest_ruh->line->ipc - lightest_ruh->line->vpc;
     for (int i = 1; i < ssd->fsp.nruh; i++) {
         struct ru_handle *current_ruh = &(ssd->ruhs[i]);
-        if (current_ruh->line->vpc > highest_vpc_ruh->line->vpc)
-            highest_vpc_ruh = current_ruh;
+        int current_fpc = ssd->sp.pgs_per_line - current_ruh->line->ipc - current_ruh->line->vpc;
+        if (lightest_fpc < current_fpc)
+            lightest_ruh = current_ruh;
     }
-    return highest_vpc_ruh;
+    return lightest_ruh;
+}
+
+static struct ru_handle *select_by_overlapped(struct ssd *ssd, struct ppa *ppa)
+{
+    struct ru_handle *most_overlapped_ruh = &(ssd->ruhs[0]);
+    for (int i = 1; i < ssd->fsp.nruh; i++) {
+        struct ru_handle *current_ruh = &(ssd->ruhs[i]);
+        if (current_ruh->line->vpc > most_overlapped_ruh->line->vpc)
+            most_overlapped_ruh = current_ruh;
+    }
+    return most_overlapped_ruh;
 }
 
 static struct ru_handle *select_by_pi(struct ssd *ssd, struct ppa *ppa)
@@ -888,9 +941,9 @@ static int do_gc(struct ssd *ssd, bool force)
     }
 
     ppa.g.blk = victim_line->id;
-    printf("[FEMU] do_gc; line: %d, ipc: %d, victim: %d, full: %d, free: %d\n", ppa.g.blk,
-              victim_line->ipc, ssd->lm.victim_line_cnt, ssd->lm.full_line_cnt,
-              ssd->lm.free_line_cnt);
+    // printf("[FEMU] do_gc; line: %d, ipc: %d, victim: %d, full: %d, free: %d\n", ppa.g.blk,
+    //           victim_line->ipc, ssd->lm.victim_line_cnt, ssd->lm.full_line_cnt,
+    //           ssd->lm.free_line_cnt);
 
     /* copy back valid data */
     for (ch = 0; ch < spp->nchs; ch++) {
@@ -1012,6 +1065,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 
     // printf("[FEMU] ssd_write; pid: %d, ruhid: %d, slpn: %"PRIu64", nlb: %"PRIu64"\n",
     //        pid, ruhid, start_lpn, end_lpn - start_lpn + 1);
+
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
         ppa = get_maptbl_ent(ssd, lpn);
         if (mapped_ppa(&ppa)) {
@@ -1057,6 +1111,8 @@ static void *ftl_thread(void *arg)
     uint64_t lat = 0;
     int rc;
     int i;
+
+    printf("[FEMU] pgs_per_line: %d\n", ssd->sp.pgs_per_line);
 
     while (!*(ssd->dataplane_started_ptr)) {
         usleep(100000);

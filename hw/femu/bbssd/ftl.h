@@ -194,6 +194,8 @@ struct write_pointer {
 typedef struct ru_handle {
     int id; // index
     // QTAILQ_HEAD(lines, line) lines;
+    uint8_t ruht;
+    uint8_t ruha;
     struct line *line;
     struct write_pointer wp;
     uint64_t ruamw;

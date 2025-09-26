@@ -894,6 +894,7 @@ static uint16_t nvme_fdp_stats(FemuCtrl *n, NvmeCmd *cmd, uint8_t csi,
     }
 
     trans_len = MIN(sizeof(log) - off, buf_len);
+    printf("[FEMU] nvme_fdp_stats; log_len: %ld, buf_len: %d\n", sizeof(log) - off, buf_len);
 
     log.hbmw[0] = cpu_to_le64(endgrp->fdp.hbmw);
     log.mbmw[0] = cpu_to_le64(endgrp->fdp.mbmw);
