@@ -1507,7 +1507,9 @@ typedef struct FemuCtrl {
         bool enabled;
         uint64_t runs;
         uint16_t nruh;
-        uint32_t nrg;
+        uint8_t nrg;
+        uint8_t ruh_policy; //> nk; 0: pi, 1: random, 2: seq, 3: rr, 4: greedy, 5: overlapped
+        uint32_t rr_quantum;
     } fdp_params;
 
     struct ssd      *ssd;

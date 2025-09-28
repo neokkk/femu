@@ -160,11 +160,13 @@ struct ssdparams {
 };
 
 struct fdp_ssdparams {
-    uint16_t nrg;
+    uint8_t nrg;
     uint16_t nruh;
     uint64_t runs;
     uint16_t rus_per_rg; // (tt_sec * secsz) / runs / nrg;
     uint16_t tt_rus; // rus_per_rg * nrg
+    uint8_t ruh_policy;
+    uint32_t rr_quantum;
 
     // namespace
     uint8_t lbafi;

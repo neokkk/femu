@@ -321,26 +321,28 @@ static void ssd_init_params(struct ssdparams *spp, FemuCtrl *n)
     spp->gc_thres_lines_high = (int)((1 - spp->gc_thres_pcent_high) * spp->tt_lines);
     spp->enable_gc_delay = true;
 
-
     check_params(spp);
 }
 
-static void ssd_init_fdp_params(struct ssd *ssd)
+static void ssd_init_fdp_params(struct ssd *ssd, FemuCtrl *n)
 {
     struct ssdparams *spp = &ssd->sp;
     struct fdp_ssdparams *fspp = &ssd->fsp;
     struct NvmeEnduranceGroup *endgrp = ssd->endgrp;
 
-    fspp->nrg = 1;
-    fspp->nruh = 8;
-    fspp->runs = 64 * 1024 * 1024;
+    fspp->nrg = n->fdp_params.nrg;
+    fspp->nruh = n->fdp_params.nruh;
+    fspp->runs = n->fdp_params.runs;
     fspp->rus_per_rg = (uint64_t)spp->tt_secs * spp->secsz / fspp->runs / fspp->nrg;
     fspp->tt_rus = fspp->rus_per_rg * fspp->nrg;
+    fspp->ruh_policy = n->fdp_params.ruh_policy;
+    fspp->rr_quantum = n->fdp_params.rr_quantum;
+
     fspp->lbafi = NVME_ID_NS_FLBAS_INDEX(ssd->ns->id_ns.flbas);
     fspp->ruamw = endgrp->fdp.runs >> ssd->ns->id_ns.lbaf->lbads;
 
-    printf("[FEMU] ssd_init_fdp_params; tt_sz: %lu, rus_per_rg: %d, tt_rus: %d, ruamw: %lu\n",
-           (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->ruamw);
+    printf("[FEMU] ssd_init_fdp_params; ruh_policy: %d, tt_sz: %lu, rus_per_rg: %d, tt_rus: %d, ruamw: %lu\n",
+           fspp->ruh_policy, (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->ruamw);
 }
 
 static void ssd_init_nand_page(struct nand_page *pg, struct ssdparams *spp)
@@ -428,7 +430,7 @@ void ssd_init(FemuCtrl *n)
     ssd->ns = &n->namespaces[0];
 
     ssd_init_params(spp, n);
-    ssd_init_fdp_params(ssd);
+    ssd_init_fdp_params(ssd, n);
 
     /* initialize ssd internal layout architecture */
     ssd->ch = g_malloc0(sizeof(struct ssd_channel) * spp->nchs);
@@ -826,14 +828,12 @@ static void gc_read_page(struct ssd *ssd, struct ppa *ppa)
     }
 }
 
-static const uint8_t RUH_SELECTION_POLICY = PI;
-
 /* move valid page data (already in DRAM) from victim line to a new page */
 static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
 {
     struct ppa new_ppa;
     struct nand_lun *new_lun;
-    struct ru_handle *ruh = select_ruh(ssd, old_ppa, RUH_SELECTION_POLICY);
+    struct ru_handle *ruh = select_ruh(ssd, old_ppa, ssd->fsp.ruh_policy);
     uint64_t lpn = get_rmap_ent(ssd, old_ppa);
 
     ftl_assert(valid_lpn(ssd, lpn));
