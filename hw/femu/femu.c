@@ -665,6 +665,7 @@ static void femu_realize(PCIDevice *pci_dev, Error **errp)
 {
     FemuCtrl *n = FEMU(pci_dev);
     int64_t bs_size;
+    uint64_t tt_size;
 
     nvme_check_size();
 
@@ -672,7 +673,13 @@ static void femu_realize(PCIDevice *pci_dev, Error **errp)
         return;
     }
 
-    bs_size = ((int64_t)n->memsz) * 1024 * 1024;
+    tt_size = (uint64_t)n->bb_params.nchs * n->bb_params.luns_per_ch * n->bb_params.pls_per_lun *
+        n->bb_params.blks_per_pl * n->bb_params.pgs_per_blk * n->bb_params.secs_per_pg * n->bb_params.secsz;
+    bs_size = tt_size * (100 - n->op_ratio) / 100;
+    // bs_size = ((int64_t)n->memsz) * 1024 * 1024;
+
+    printf("[FEMU] femu_realize; total dev size: %ld (op: 0.%d%%), bs_size: %ld\n",
+           tt_size, n->op_ratio, bs_size);
 
     init_dram_backend(&n->mbe, bs_size);
     n->mbe->femu_mode = n->femu_mode;
@@ -749,6 +756,7 @@ static void femu_exit(PCIDevice *pci_dev)
 static Property femu_props[] = {
     DEFINE_PROP_STRING("serial", FemuCtrl, serial),
     DEFINE_PROP_UINT32("devsz_mb", FemuCtrl, memsz, 1024), /* in MB */
+    DEFINE_PROP_UINT8("op_ratio", FemuCtrl, op_ratio, 25), //> nk: %; 0 <= x < 100
     DEFINE_PROP_UINT32("namespaces", FemuCtrl, num_namespaces, 1),
     DEFINE_PROP_UINT32("queues", FemuCtrl, nr_io_queues, 8),
     DEFINE_PROP_UINT32("entries", FemuCtrl, max_q_ents, 0x7ff),

@@ -948,8 +948,9 @@ static uint16_t nvme_get_log(FemuCtrl *n, NvmeCmd *cmd)
         return nvme_fw_log_info(n, cmd, len);
     case NVME_LOG_CMD_EFFECTS:
         return nvme_cmd_effects(n, cmd, csi, len, off);
-     case NVME_LOG_FDP_STATS:
+    case NVME_LOG_FDP_STATS:
          return nvme_fdp_stats(n, cmd, csi, len, off);
+    case NVME_LOG_FDP_CONFS:
     default:
         if (n->ext_ops.get_log) {
             return n->ext_ops.get_log(n, cmd);

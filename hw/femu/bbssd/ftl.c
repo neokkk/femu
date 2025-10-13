@@ -335,14 +335,16 @@ static void ssd_init_fdp_params(struct ssd *ssd, FemuCtrl *n)
     fspp->runs = n->fdp_params.runs;
     fspp->rus_per_rg = (uint64_t)spp->tt_secs * spp->secsz / fspp->runs / fspp->nrg;
     fspp->tt_rus = fspp->rus_per_rg * fspp->nrg;
-    fspp->ruh_policy = n->fdp_params.ruh_policy;
     fspp->rr_quantum = n->fdp_params.rr_quantum;
 
     fspp->lbafi = NVME_ID_NS_FLBAS_INDEX(ssd->ns->id_ns.flbas);
     fspp->ruamw = endgrp->fdp.runs >> ssd->ns->id_ns.lbaf->lbads;
 
-    printf("[FEMU] ssd_init_fdp_params; ruh_policy: %d, tt_sz: %lu, rus_per_rg: %d, tt_rus: %d, ruamw: %lu\n",
-           fspp->ruh_policy, (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->ruamw);
+    fspp->ruh_policy = n->fdp_params.ruh_policy;
+    // fspp->ruh_policies = (uint8_t *)malloc(sizeof(uint8_t) *n->fdp_params.nruh);
+
+    printf("[FEMU] ssd_init_fdp_params; ruh_policy: %d, nruh: %d, tt_sz: %lu, rus_per_rg: %d, tt_rus: %d, ruamw: %lu\n",
+           fspp->ruh_policy, fspp->nruh, (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->ruamw);
 }
 
 static void ssd_init_nand_page(struct nand_page *pg, struct ssdparams *spp)

@@ -99,6 +99,12 @@ static uint16_t bb_admin_cmd(FemuCtrl *n, NvmeCmd *cmd)
     }
 }
 
+static uint16_t bb_get_log(struct FemuCtrl *n, NvmeCmd *cmd)
+{
+    printf("[FEMU] bb_get_log; fdp_conf\n");
+    return NVME_SUCCESS;
+}
+
 int nvme_register_bbssd(FemuCtrl *n)
 {
     n->ext_ops = (FemuExtCtrlOps) {
@@ -108,7 +114,7 @@ int nvme_register_bbssd(FemuCtrl *n)
         .rw_check_req     = NULL,
         .admin_cmd        = bb_admin_cmd,
         .io_cmd           = bb_io_cmd,
-        .get_log          = NULL,
+        .get_log          = bb_get_log,
     };
 
     return 0;

@@ -119,6 +119,8 @@ struct ssdparams {
     int luns_per_ch;  /* # of LUNs per channel */
     int nchs;         /* # of channels in the SSD */
 
+    uint8_t op_ratio;
+
     int pg_rd_lat;    /* NAND page read latency in nanoseconds */
     int pg_wr_lat;    /* NAND page program latency in nanoseconds */
     int blk_er_lat;   /* NAND block erase latency in nanoseconds */
@@ -165,7 +167,8 @@ struct fdp_ssdparams {
     uint64_t runs;
     uint16_t rus_per_rg; // (tt_sec * secsz) / runs / nrg;
     uint16_t tt_rus; // rus_per_rg * nrg
-    uint8_t ruh_policy;
+    uint8_t ruh_policy; //> nk; 0: pi, 1: random, 2: seq, 3: rr, 4: greedy, 5: overlapped
+    // uint8_t *ruh_policies; //> nk; must be array with nruh length;
     uint32_t rr_quantum;
 
     // namespace

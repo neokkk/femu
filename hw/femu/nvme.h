@@ -440,7 +440,7 @@ typedef struct QEMU_PACKED NvmePhidList {
 } NvmePhidList;
 
 typedef struct QEMU_PACKED NvmePhidDescr {
-    uint8_t  ruht;
+    uint8_t  ruht; //> nk; 1: II, 2: PI
     uint8_t  rsvd1;
     uint16_t ruhid;
 } NvmePhidDescr;
@@ -1477,6 +1477,7 @@ typedef struct FemuCtrl {
     uint8_t         femu_mode;
     uint8_t         lver; /* Coperd: OCSSD version, 0x1 -> OC1.2, 0x2 -> OC2.0 */
     uint32_t        memsz;
+    uint8_t         op_ratio;
     OcCtrlParams    oc_params;
 
     Oc12Ctrl  *oc12_ctrl;
