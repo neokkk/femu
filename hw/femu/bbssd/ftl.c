@@ -722,12 +722,12 @@ static void mark_block_free(struct ssd *ssd, struct ppa *ppa)
 }
 
 enum {
+    PI, // persistently isolated
     RANDOM,
     SEQUENTIAL,
     RR,
     GREEDY,
     OVERLAPPED,
-    PI, // persistently isolated
 };
 
 static struct ru_handle *select_by_random(struct ssd *ssd, struct ppa *ppa);
