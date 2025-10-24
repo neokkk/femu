@@ -4998,7 +4998,7 @@ static uint16_t nvme_fdp_confs(NvmeCtrl *n, uint32_t endgrpid, uint32_t buf_len,
         hdr->runs = cpu_to_le64(endgrp->fdp.runs);
 
         for (i = 0; i < nruh; i++) {
-            ruhd->ruht = NVME_RUHT_INITIALLY_ISOLATED;
+            ruhd->ruht = endgrp->fdp.ruhs[i].ruht;
             ruhd++;
         }
     } else {
@@ -5182,6 +5182,7 @@ static uint16_t nvme_get_log(NvmeCtrl *n, NvmeRequest *req)
         return status;
     }
 
+    printf("[FEMU] nvme_get_log; lid: %u\n", lid);
     switch (lid) {
     case NVME_LOG_ERROR_INFO:
         return nvme_error_info(n, rae, len, off, req);

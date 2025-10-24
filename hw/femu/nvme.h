@@ -394,6 +394,14 @@ typedef struct QEMU_PACKED NvmeRuhuDescr {
     uint8_t rsvd1[7];
 } NvmeRuhuDescr;
 
+typedef struct QEMU_PACKED NvmeFdpConfsHdr {
+    uint16_t num_confs;
+    uint8_t  version;
+    uint8_t  rsvd3;
+    uint32_t size;
+    uint8_t  rsvd8[8];
+} NvmeFdpConfsHdr;
+
 typedef struct QEMU_PACKED NvmeFdpStatsLog {
     uint64_t hbmw[2];
     uint64_t mbmw[2];
@@ -932,6 +940,7 @@ enum NvmeFeatureIds {
     NVME_ASYNCHRONOUS_EVENT_CONF    = 0xb,
     NVME_TIMESTAMP                  = 0xe,
     NVME_FDP_ENABLE                 = 0x1d,
+    NVME_FDP_CHANGE_RUH_TYPE        = 0x1e,
     NVME_SOFTWARE_PROGRESS_MARKER   = 0x80,
     NVME_FID_MAX                    = 0x100
 };
@@ -1509,8 +1518,7 @@ typedef struct FemuCtrl {
         uint64_t runs;
         uint16_t nruh;
         uint8_t nrg;
-        uint8_t ruh_policy; //> nk; 0: pi, 1: random, 2: seq, 3: rr, 4: greedy, 5: overlapped
-        uint32_t rr_quantum;
+        char *pi_ruhids;
     } fdp_params;
 
     struct ssd      *ssd;

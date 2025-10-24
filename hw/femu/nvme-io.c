@@ -72,6 +72,7 @@ static void nvme_process_sq_io(void *opaque, int index_poller)
         req = QTAILQ_FIRST(&sq->req_list);
         QTAILQ_REMOVE(&sq->req_list, req, entry);
         memset(&req->cqe, 0, sizeof(req->cqe));
+
         /* Coperd: record req->stime at earliest convenience */
         req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
         req->cqe.cid = cmd.cid;
@@ -79,7 +80,7 @@ static void nvme_process_sq_io(void *opaque, int index_poller)
         memcpy(&req->cmd, &cmd, sizeof(NvmeCmd));
 
         if (n->print_log) {
-            femu_debug("%s,cid:%d\n", __func__, cmd.cid);
+            femu_debug("%s, cid:%d\n", __func__, cmd.cid);
         }
 
         status = nvme_io_cmd(n, &cmd, req);
@@ -376,7 +377,7 @@ static uint16_t nvme_io_mgmt_recv_ruhs(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *
 
             ruhsd->pid = cpu_to_le16(pid);
             ruhsd->ruhid = *ruhid;
-            ruhsd->earutr = 0;
+            ruhsd->earutr = 100;
             ruhsd->ruamw = cpu_to_le64(ruh->rus[rg].ruamw);
         }
     }

@@ -363,33 +363,101 @@ static void nvme_ns_init_identify(FemuCtrl *n, NvmeIdNs *id_ns)
     }
 }
 
+#include "qemu/osdep.h"
+#include "qapi/error.h"
+#include <glib.h>
+#include <errno.h>
+#include <stdint.h>
+
+static GByteArray *parse_u8_list_colon(const char *s, Error **errp)
+{
+    GByteArray *arr = g_byte_array_new();
+    printf("pi_ruhids: %s\n", s);
+
+    if (!s || !*s) {
+        return arr;  // 미지정 → 빈 배열
+    }
+
+    gchar *tmp = g_strstrip(g_strdup(s));
+    if (*tmp == '\0') {
+        g_free(tmp);
+        return arr;
+    }
+
+    // 콜론(:), 세미콜론(;), 공백( , \t)을 구분자로 분리
+    // regex split: "[;: \t]+" → ;, :, 공백, 탭 등 연속 구분 가능
+    gchar **tokens = g_regex_split_simple("[;: \t]+", tmp, 0, 0);
+
+    for (gchar **p = tokens; *p; ++p) {
+        if (**p == '\0') continue;
+
+        errno = 0;
+        gchar *end = NULL;
+        unsigned long v = g_ascii_strtoull(*p, &end, 0);
+        if (errno || end == *p || *end != '\0' || v > 255) {
+            error_setg(errp, "invalid byte '%s' in '%s' (0–255 allowed)", *p, s);
+            g_strfreev(tokens);
+            g_free(tmp);
+            g_byte_array_unref(arr);
+            return NULL;
+        }
+        guint8 b = (guint8)v;
+        g_byte_array_append(arr, &b, 1);
+    }
+
+    g_strfreev(tokens);
+    g_free(tmp);
+    return arr;
+}
+
 static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
 {
     NvmeEnduranceGroup *endgrp = ns->endgrp = &n->endgrp;
     NvmeRuHandle *ruh;
     uint8_t lbafi = NVME_ID_NS_FLBAS_INDEX(ns->id_ns.flbas);
     g_autofree unsigned int *ruhids = NULL;
+    g_autofree bool *pi_ruhids = NULL;
     unsigned int *ruhid;
     uint16_t *ph;
-    int nphs = 8;
+    GByteArray *pi_inputs;
+    Error *parse_err = NULL;
 
-    endgrp->fdp.nrg = 1;
-    endgrp->fdp.nruh = 8;
-    endgrp->fdp.runs = 64 * 1024 * 1024;
+    endgrp->fdp.nrg = n->fdp_params.nrg;
+    endgrp->fdp.nruh = n->fdp_params.nruh;
+    endgrp->fdp.runs = n->fdp_params.runs;
     endgrp->fdp.ruhs = g_new(NvmeRuHandle, endgrp->fdp.nruh);
 
-    printf("[FEMU] nvme_ns_init_fdp; nrg: %d, nruh: %d, nph: %d\n", endgrp->fdp.nrg, endgrp->fdp.nruh, nphs);
+    pi_inputs = parse_u8_list_colon(n->fdp_params.pi_ruhids, &parse_err);
+    if (parse_err) {
+        printf("[FEMU] nvme_ns_init_fdp; Fail to parse pi pids\n");
+        return false;
+    }
+
+    pi_ruhids = g_new0(bool, endgrp->fdp.nruh);
+    for (int i = 0; i < endgrp->fdp.nruh; i++) {
+        pi_ruhids[i] = false;
+    }
+
+    printf("pi:");
+    for (guint i = 0; i < pi_inputs->len; i++) {
+        pi_ruhids[pi_inputs->data[i]] = true;
+        printf(" %u", pi_inputs->data[i]);
+    }
+    printf("\n");
+
+    printf("[FEMU] nvme_ns_init_fdp; npiruhid: %d, nrg: %d, nruh: %d, nph: %d\n",
+           pi_inputs->len, endgrp->fdp.nrg, endgrp->fdp.nruh, endgrp->fdp.nruh);
 
     for (uint16_t i = 0; i < endgrp->fdp.nruh; i++) {
         endgrp->fdp.ruhs[i] = (NvmeRuHandle) {
-            .ruht = NVME_RUHT_INITIALLY_ISOLATED,
+            .ruht = pi_ruhids[i] == true ? NVME_RUHT_PERSISTENTLY_ISOLATED : NVME_RUHT_INITIALLY_ISOLATED,
             .ruha = NVME_RUHA_UNUSED,
         };
 
         endgrp->fdp.ruhs[i].rus = g_new(NvmeReclaimUnit, endgrp->fdp.nrg);
     }
 
-    ns->fdp.nphs = nphs;
+    ns->fdp.nphs = endgrp->fdp.nruh;
 
     endgrp->fdp.enabled = true;
 
@@ -678,7 +746,7 @@ static void femu_realize(PCIDevice *pci_dev, Error **errp)
     bs_size = tt_size * (100 - n->op_ratio) / 100;
     // bs_size = ((int64_t)n->memsz) * 1024 * 1024;
 
-    printf("[FEMU] femu_realize; total dev size: %ld (op: 0.%d%%), bs_size: %ld\n",
+    printf("[FEMU] femu_realize; total dev size: %ld (op: %d%%), bs_size: %ld\n",
            tt_size, n->op_ratio, bs_size);
 
     init_dram_backend(&n->mbe, bs_size);
@@ -823,8 +891,7 @@ static Property femu_props[] = {
     DEFINE_PROP_UINT8("nrg", FemuCtrl, fdp_params.nrg, 1),
     DEFINE_PROP_UINT16("nruh", FemuCtrl, fdp_params.nruh, 8),
     DEFINE_PROP_UINT64("runs", FemuCtrl, fdp_params.runs, 1024 * 1024 * 64),
-    DEFINE_PROP_UINT8("ruh_policy", FemuCtrl, fdp_params.ruh_policy, 0),
-    DEFINE_PROP_UINT32("rr_quantum", FemuCtrl, fdp_params.rr_quantum, 4096),
+    DEFINE_PROP_STRING("pi_ruhids", FemuCtrl, fdp_params.pi_ruhids),
     DEFINE_PROP_END_OF_LIST(),
 };
 
