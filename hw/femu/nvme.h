@@ -17,6 +17,7 @@
 #include "inc/pqueue.h"
 #include "nand/nand.h"
 #include "timing-model/timing.h"
+#include "util.h"
 #include <stdbool.h>
 
 #define NVME_ID_NS_LBADS(ns)                                                  \

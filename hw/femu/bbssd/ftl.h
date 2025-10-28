@@ -242,9 +242,12 @@ struct ssd {
     struct rte_ring **to_poller;
     bool *dataplane_started_ptr;
     QemuThread ftl_thread;
+
+    ObjTraceStore trace_store; //> nk
 };
 
 void ssd_init(FemuCtrl *n);
+void ssd_log(FemuCtrl *n);
 
 #ifdef FEMU_DEBUG_FTL
 #define ftl_debug(fmt, ...) \

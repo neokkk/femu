@@ -26,6 +26,7 @@ typedef struct obj_trace_t {
     uint64_t t_reclaim_ns;    // 0이면 미기록 (이 시점에 활성 종료)
     uint64_t t_wall_create_ns;// 옵션: 가독용 벽시계
     uint32_t valid_pgs;
+    bool gc;
 } obj_trace_t;
 
 /* ===== 저장소: 누적 배열 + 활성 맵 ===== */
@@ -55,7 +56,7 @@ static inline void objt_store_destroy(ObjTraceStore *st)
 }
 
 /* create: 새로 누적에 append + active 등록 (활성 중복 금지) */
-static inline bool objt_on_create(ObjTraceStore *st, int64_t id)
+static inline bool objt_on_create(ObjTraceStore *st, int64_t id, bool gc)
 {
     g_return_val_if_fail(st && st->accum && st->active, false);
     if (g_hash_table_contains(st->active, &id)) return false; // 활성 충돌
@@ -65,6 +66,7 @@ static inline bool objt_on_create(ObjTraceStore *st, int64_t id)
         .t_full_ns        = 0,
         .t_reclaim_ns     = 0,
         .t_wall_create_ns = nsec_now_real(),
+        .gc               = gc,
     };
     g_array_append_val(st->accum, tr);
     guint idx = st->accum->len - 1;
@@ -126,15 +128,15 @@ static inline void objt_dump_csv(const ObjTraceStore *st, FILE *fp)
     g_return_if_fail(st && st->accum && fp);
     fprintf(fp,
         "id,copied_pgs,t_create_ns,t_full_ns,t_reclaim_ns,t_wall_create_ns,"
-        "create_to_full_ms,full_to_reclaim_ms,lifecycle_ms\n");
+        "create_to_full_ms,full_to_reclaim_ms,lifecycle_ms,gc\n");
     for (guint i = 0; i < st->accum->len; i++) {
         const obj_trace_t *tr = &g_array_index(st->accum, obj_trace_t, i);
         double c2f_ms = (tr->t_full_ns     ? (double)(tr->t_full_ns     - tr->t_create_ns)/1e6 : 0.0);
         double f2r_ms = (tr->t_full_ns && tr->t_reclaim_ns) ? (double)(tr->t_reclaim_ns - tr->t_full_ns)/1e6 : 0.0;
         double life_ms= (tr->t_reclaim_ns  ? (double)(tr->t_reclaim_ns  - tr->t_create_ns)/1e6 : 0.0);
-        fprintf(fp, "%" PRId64 ",%" PRIu32 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.3f,%.3f,%.3f\n",
+        fprintf(fp, "%" PRId64 ",%" PRIu32 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.3f,%.3f,%.3f,%d\n",
                 tr->id, tr->valid_pgs, tr->t_create_ns, tr->t_full_ns, tr->t_reclaim_ns, tr->t_wall_create_ns,
-                c2f_ms, f2r_ms, life_ms);
+                c2f_ms, f2r_ms, life_ms, tr->gc);
     }
 }
 

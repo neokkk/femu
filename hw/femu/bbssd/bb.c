@@ -20,6 +20,7 @@ static void bb_init(FemuCtrl *n, Error **errp)
     ssd->dataplane_started_ptr = &n->dataplane_started;
     ssd->ssdname = (char *)n->devname;
     printf("[FEMU] FDP-enabled SSD mode start...\n");
+
     ssd_init(n);
 }
 
@@ -102,6 +103,7 @@ static uint16_t bb_admin_cmd(FemuCtrl *n, NvmeCmd *cmd)
 static uint16_t bb_get_log(struct FemuCtrl *n, NvmeCmd *cmd)
 {
     printf("[FEMU] bb_get_log; fdp_conf\n");
+    ssd_log(n);
     return NVME_SUCCESS;
 }
 
