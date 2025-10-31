@@ -214,10 +214,10 @@ static struct line *get_next_free_line(struct ssd *ssd)
         return NULL;
     }
 
-    // printf("[FEMU] get_next_free_line; new line: %d, free_line_cnt: %d, victim_line_cnt: %d, full_line_cnt: %d, total_cnt: %d\n",
-    //        curline->id,
-    //        lm->free_line_cnt, lm->victim_line_cnt, lm->full_line_cnt,
-    //        lm->free_line_cnt + lm->victim_line_cnt + lm->full_line_cnt);
+    printf("[FEMU] get_next_free_line; new line: %d, free_line_cnt: %d, victim_line_cnt: %d, full_line_cnt: %d, total_cnt: %d\n",
+           curline->id,
+           lm->free_line_cnt, lm->victim_line_cnt, lm->full_line_cnt,
+           lm->free_line_cnt + lm->victim_line_cnt + lm->full_line_cnt);
 
     QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
     lm->free_line_cnt--;
@@ -688,7 +688,6 @@ static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
 
     /* update corresponding line status */
     ftl_assert(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
-
     line->ipc++;
 
     ftl_assert(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
@@ -791,7 +790,7 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
         new_line->gc = true;
 
         objt_on_create(&ssd->trace_store, new_line->id, true);
-        objt_on_full(&ssd->trace_store, prev_line->id, prev_line->vpc);
+        objt_on_full(&ssd->trace_store, prev_line->id);
     }
 
     nvme_fdp_stat_inc(&ssd->endgrp->fdp.mbmw, 1);
@@ -866,6 +865,7 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
 {
     struct line_mgmt *lm = &ssd->lm;
     struct line *line = get_line(ssd, ppa);
+    objt_on_reclaim(&ssd->trace_store, line->id, line->vpc);
     line->ipc = 0;
     line->vpc = 0;
     line->ruh = NULL;
@@ -873,7 +873,6 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
     /* move this line to free line list */
     QTAILQ_INSERT_TAIL(&lm->free_line_list, line, entry);
     lm->free_line_cnt++;
-    objt_on_reclaim(&ssd->trace_store, line->id);
 }
 
 static int do_gc(struct ssd *ssd, bool force)
@@ -883,6 +882,7 @@ static int do_gc(struct ssd *ssd, bool force)
     struct nand_lun *lunp;
     struct ppa ppa;
     int ch, lun, copied_pgs = 0;
+    int prev_line_id;
 
     victim_line = select_victim_line(ssd, force);
     if (!victim_line) {
@@ -890,6 +890,7 @@ static int do_gc(struct ssd *ssd, bool force)
     }
 
     ppa.g.blk = victim_line->id;
+    prev_line_id = victim_line->id;
     printf("[FEMU] do_gc; line: %d, gc: %d, ruhid: %d, vpc: %d, ipc: %d, pos: %"PRIu64" force: %d\n",
            ppa.g.blk, victim_line->gc, victim_line->ruh->id, victim_line->vpc, victim_line->ipc, victim_line->pos, force);
 
@@ -915,7 +916,10 @@ static int do_gc(struct ssd *ssd, bool force)
         }
     }
 
-    printf("copied_pgs: %d\n", copied_pgs);
+    printf("copied_pgs: %d to line: %d", copied_pgs, prev_line_id);
+    if (victim_line->id != prev_line_id)
+        printf(", %d", victim_line->id);
+    printf("\n");
 
     /* update line status */
     mark_line_free(ssd, &ppa);
@@ -1048,7 +1052,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 
             //> nk
             objt_on_create(&ssd->trace_store, new_line->id, false);
-            objt_on_full(&ssd->trace_store, prev_line->id, prev_line->vpc);
+            objt_on_full(&ssd->trace_store, prev_line->id);
         }
 
         struct nand_cmd swr;

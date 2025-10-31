@@ -75,7 +75,7 @@ static inline bool objt_on_create(ObjTraceStore *st, int64_t id, bool gc)
 }
 
 /* full: 활성에서 찾아 t_full 채움(1회) */
-static inline bool objt_on_full(ObjTraceStore *st, int64_t id, uint32_t valid_pgs)
+static inline bool objt_on_full(ObjTraceStore *st, int64_t id)
 {
     g_return_val_if_fail(st && st->accum && st->active, false);
     gpointer val = g_hash_table_lookup(st->active, &id);
@@ -83,12 +83,11 @@ static inline bool objt_on_full(ObjTraceStore *st, int64_t id, uint32_t valid_pg
     guint idx = GPOINTER_TO_UINT(val);
     obj_trace_t *tr = &g_array_index(st->accum, obj_trace_t, idx);
     if (tr->t_full_ns == 0) tr->t_full_ns = nsec_now_mono();
-    tr->valid_pgs = valid_pgs;
     return true;
 }
 
 /* reclaim: 활성에서 찾아 t_reclaim 채우고 active에서 제거(누적에는 남김) */
-static inline bool objt_on_reclaim(ObjTraceStore *st, int64_t id)
+static inline bool objt_on_reclaim(ObjTraceStore *st, int64_t id, int valid_pgs)
 {
     g_return_val_if_fail(st && st->accum && st->active, false);
     gpointer val = NULL, orig_key = NULL;
@@ -96,6 +95,7 @@ static inline bool objt_on_reclaim(ObjTraceStore *st, int64_t id)
     guint idx = GPOINTER_TO_UINT(val);
     obj_trace_t *tr = &g_array_index(st->accum, obj_trace_t, idx);
     if (tr->t_reclaim_ns == 0) tr->t_reclaim_ns = nsec_now_mono();
+    tr->valid_pgs = valid_pgs;
     g_hash_table_remove(st->active, &id); // 활성 종료
     return true;
 }
