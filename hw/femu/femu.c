@@ -422,8 +422,9 @@ static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
     GByteArray *pi_inputs;
     Error *parse_err = NULL;
 
+    endgrp->fdp.enabled = n->fdp_params.enabled;
     endgrp->fdp.nrg = n->fdp_params.nrg;
-    endgrp->fdp.nruh = n->fdp_params.nruh;
+    endgrp->fdp.nruh = endgrp->fdp.enabled ? n->fdp_params.nruh : 1; //> if disabled, nruh: 1
     endgrp->fdp.runs = n->fdp_params.runs;
     endgrp->fdp.ruhs = g_new(NvmeRuHandle, endgrp->fdp.nruh);
 
@@ -458,8 +459,6 @@ static bool nvme_ns_init_fdp(FemuCtrl *n, NvmeNamespace *ns)
     }
 
     ns->fdp.nphs = endgrp->fdp.nruh;
-
-    endgrp->fdp.enabled = true;
 
     if (!endgrp->fdp.ruhs) {
         ns->fdp.nphs = 1;
@@ -765,6 +764,8 @@ static void femu_realize(PCIDevice *pci_dev, Error **errp)
     n->aer_reqs = g_malloc0(sizeof(*n->aer_reqs) * (n->aerl + 1));
     n->features.int_vector_config = g_malloc0(sizeof(*n->features.int_vector_config) * (n->nr_io_queues + 1));
 
+    bd_log_init(&n->bdc); //> nk
+
     nvme_init_pci(n);
     nvme_init_ctrl(n);
     nvme_init_namespaces(n, errp);
@@ -888,6 +889,7 @@ static Property femu_props[] = {
     DEFINE_PROP_INT32("ch_xfer_lat", FemuCtrl, bb_params.ch_xfer_lat, 0),
     DEFINE_PROP_INT32("gc_thres_pcent", FemuCtrl, bb_params.gc_thres_pcent, 75),
     DEFINE_PROP_INT32("gc_thres_pcent_high", FemuCtrl, bb_params.gc_thres_pcent_high, 95),
+    DEFINE_PROP_BOOL("fdp_enable", FemuCtrl, fdp_params.enabled, true),
     DEFINE_PROP_UINT8("nrg", FemuCtrl, fdp_params.nrg, 1),
     DEFINE_PROP_UINT16("nruh", FemuCtrl, fdp_params.nruh, 8),
     DEFINE_PROP_UINT64("runs", FemuCtrl, fdp_params.runs, 1024 * 1024 * 64),

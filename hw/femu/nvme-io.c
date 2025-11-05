@@ -120,6 +120,9 @@ static void nvme_post_cqe(NvmeCQueue *cq, NvmeRequest *req)
     cqe->sq_id = cpu_to_le16(sq->sqid);
     cqe->sq_head = cpu_to_le16(sq->head);
 
+    if (req->cmd.opcode == NVME_CMD_WRITE)
+        bd_log_add(&n->bdc, "[end] process nvme write request; sqid %d, cqid: %d", sq->sqid, cq->cqid);
+
     if (cq->phys_contig) {
         addr = cq->dma_addr + cq->tail * n->cqe_size;
         ((NvmeCqe *)cq->dma_addr_hva)[cq->tail] = *cqe;
@@ -263,6 +266,9 @@ uint16_t nvme_rw(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req)
     uint16_t err;
     int ret;
 
+    if (rw->opcode == NVME_CMD_WRITE)
+        bd_log_add(&n->bdc, "[start] process nvme write request; sqid: %d", req->sq->sqid);
+
     req->is_write = (rw->opcode == NVME_CMD_WRITE) ? 1 : 0;
 
     err = femu_nvme_rw_check_req(n, ns, cmd, req, slba, elba, nlb, ctrl,
@@ -350,9 +356,9 @@ static uint16_t nvme_io_mgmt_recv_ruhs(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *
     size_t trans_len;
     g_autofree uint8_t *buf = NULL;
 
-    if (!n->endgrp.fdp.enabled) {
-        return NVME_FDP_DISABLED | NVME_DNR;
-    }
+    // if (!n->endgrp.fdp.enabled) {
+    //     return NVME_FDP_DISABLED | NVME_DNR;
+    // }
 
     endgrp = ns->endgrp;
 

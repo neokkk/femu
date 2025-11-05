@@ -1522,6 +1522,8 @@ typedef struct FemuCtrl {
         char *pi_ruhids;
     } fdp_params;
 
+    BDLogChunk bdc;
+
     struct ssd      *ssd;
     SsdDramBackend  *mbe;
     int             completed;
