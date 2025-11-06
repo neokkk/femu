@@ -2,6 +2,7 @@
 #define __FEMU_FTL_H
 
 #include "../nvme.h"
+#include "../util.h"
 
 #define INVALID_PPA     (~(0ULL))
 #define INVALID_LPN     (~(0ULL))
@@ -203,14 +204,22 @@ struct ssd {
     struct write_pointer wp;
     struct line_mgmt lm;
 
+    uint64_t hbmw;
+    uint64_t mbmw;
+
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;
     struct rte_ring **to_poller;
     bool *dataplane_started_ptr;
     QemuThread ftl_thread;
+
+    FILE *write_trace_fp;
+    ObjTraceStore trace_store; //> nk
 };
 
 void ssd_init(FemuCtrl *n);
+void ssd_log(FemuCtrl *n);
+void nvme_fdp_stats(FemuCtrl *n);
 
 #ifdef FEMU_DEBUG_FTL
 #define ftl_debug(fmt, ...) \

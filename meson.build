@@ -623,6 +623,7 @@ if 'cpp' in all_languages
 endif
 
 add_project_arguments(qemu_cflags, native: false, language: 'c')
+add_project_arguments('-Wno-error=suggest-attribute=format', language: 'c')
 add_project_arguments(cc.get_supported_arguments(warn_flags), native: false, language: 'c')
 if 'cpp' in all_languages
   add_project_arguments(qemu_cxxflags, native: false, language: 'cpp')

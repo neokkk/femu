@@ -694,6 +694,12 @@ static void femu_class_init(ObjectClass *oc, void *data)
     DeviceClass *dc = DEVICE_CLASS(oc);
     PCIDeviceClass *pc = PCI_DEVICE_CLASS(oc);
 
+#ifdef FEMU_DEBUG_NVME
+    printf("FEMU_DEBUG_NVME=on\n");
+#else
+    printf("FEMU_DEBUG_NVME=off\n");
+#endif
+
     pc->realize = femu_realize;
     pc->exit = femu_exit;
     pc->class_id = PCI_CLASS_STORAGE_EXPRESS;

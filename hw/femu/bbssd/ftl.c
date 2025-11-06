@@ -1,4 +1,5 @@
 #include "ftl.h"
+#include "hw/femu/util.h"
 
 //#define FEMU_DEBUG_FTL
 
@@ -91,6 +92,8 @@ static void ssd_init_lines(struct ssd *ssd)
     ftl_assert(lm->tt_lines == spp->tt_lines);
     lm->lines = g_malloc0(sizeof(struct line) * lm->tt_lines);
 
+    objt_store_init(&ssd->trace_store, lm->tt_lines);
+
     QTAILQ_INIT(&lm->free_line_list);
     lm->victim_line_pq = pqueue_init(spp->tt_lines, victim_line_cmp_pri,
             victim_line_get_pri, victim_line_set_pri,
@@ -107,11 +110,13 @@ static void ssd_init_lines(struct ssd *ssd)
         /* initialize all the lines as free lines */
         QTAILQ_INSERT_TAIL(&lm->free_line_list, line, entry);
         lm->free_line_cnt++;
+        objt_on_create(&ssd->trace_store, line->id, false);
     }
 
     ftl_assert(lm->free_line_cnt == lm->tt_lines);
     lm->victim_line_cnt = 0;
     lm->full_line_cnt = 0;
+
 }
 
 static void ssd_init_write_pointer(struct ssd *ssd)
@@ -180,6 +185,7 @@ static void ssd_advance_write_pointer(struct ssd *ssd)
                     ftl_assert(wpp->curline->ipc == 0);
                     QTAILQ_INSERT_TAIL(&lm->full_line_list, wpp->curline, entry);
                     lm->full_line_cnt++;
+                    // write_trace(ssd->write_trace_fp, "line %d full\n", wpp->curline->id);
                 } else {
                     ftl_assert(wpp->curline->vpc >= 0 && wpp->curline->vpc < spp->pgs_per_line);
                     /* there must be some invalid pages in this line */
@@ -187,6 +193,8 @@ static void ssd_advance_write_pointer(struct ssd *ssd)
                     pqueue_insert(lm->victim_line_pq, wpp->curline);
                     lm->victim_line_cnt++;
                 }
+
+                objt_on_full(&ssd->trace_store, wpp->curline->id);
                 /* current line is used up, pick another empty line */
                 check_addr(wpp->blk, spp->blks_per_pl);
                 wpp->curline = NULL;
@@ -195,9 +203,13 @@ static void ssd_advance_write_pointer(struct ssd *ssd)
                     /* TODO */
                     abort();
                 }
+                // printf("get_next_free_line; line: %d\n", wpp->curline->id);
+                // write_trace(ssd->write_trace_fp, "line %d allocated\n", wpp->curline->id);
                 wpp->blk = wpp->curline->id;
+                objt_on_create(&ssd->trace_store, wpp->curline->id, false);
                 check_addr(wpp->blk, spp->blks_per_pl);
-                /* make sure we are starting from page 0 in the super block */
+
+                /* make sure we are starting from Opage 0 in the super block */
                 ftl_assert(wpp->pg == 0);
                 ftl_assert(wpp->lun == 0);
                 ftl_assert(wpp->ch == 0);
@@ -282,6 +294,7 @@ static void ssd_init_params(struct ssdparams *spp, FemuCtrl *n)
     spp->gc_thres_lines_high = (int)((1 - spp->gc_thres_pcent_high) * spp->tt_lines);
     spp->enable_gc_delay = true;
 
+    printf("pgs_per_line: %d, blks_per_line: %d\n", spp->pgs_per_line, spp->blks_per_line);
 
     check_params(spp);
 }
@@ -360,6 +373,19 @@ static void ssd_init_rmap(struct ssd *ssd)
     }
 }
 
+void ssd_log(FemuCtrl *n)
+{
+    FILE *fp;
+    printf("ssd_log\n");
+    fp = fopen("log.csv", "w");
+    if (fp == NULL) {
+        perror("Fail to open file");
+        return;
+    }
+    objt_dump_csv(&n->ssd->trace_store, fp);
+    fclose(fp);
+}
+
 void ssd_init(FemuCtrl *n)
 {
     struct ssd *ssd = n->ssd;
@@ -368,6 +394,12 @@ void ssd_init(FemuCtrl *n)
     ftl_assert(ssd);
 
     ssd_init_params(spp, n);
+
+    ssd->write_trace_fp = fopen("write_trace.log", "w");
+    if (!ssd->write_trace_fp) {
+        printf("Fail to open for write trace log\n");
+        exit(-1);
+    }
 
     /* initialize ssd internal layout architecture */
     ssd->ch = g_malloc0(sizeof(struct ssd_channel) * spp->nchs);
@@ -555,6 +587,12 @@ static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
     }
     line->ipc++;
     ftl_assert(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
+
+    // uint64_t lpn = get_rmap_ent(ssd, ppa);
+    // printf("mark_page_invalid; lpn: %"PRIu64" line: %d\n", lpn, line->id);
+    // write_trace(ssd->write_trace_fp, "[%"PRIu64"] mark_page_invalid; lpn: %"PRIu64" line: %d\n",
+    //                   nsec_now_mono(), lpn, line->id);
+
     /* Adjust the position of the victime line in the pq under over-writes */
     if (line->pos) {
         /* Note that line->vpc will be updated by this call */
@@ -572,7 +610,7 @@ static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
     }
 }
 
-static void mark_page_valid(struct ssd *ssd, struct ppa *ppa)
+static void mark_page_valid(struct ssd *ssd, struct ppa *ppa, bool gc)
 {
     struct nand_block *blk = NULL;
     struct nand_page *pg = NULL;
@@ -592,6 +630,12 @@ static void mark_page_valid(struct ssd *ssd, struct ppa *ppa)
     line = get_line(ssd, ppa);
     ftl_assert(line->vpc >= 0 && line->vpc < ssd->sp.pgs_per_line);
     line->vpc++;
+
+    // uint64_t lpn = get_rmap_ent(ssd, ppa);
+    // printf("mark_page_valid; lpn: %"PRIu64" line: %d, gc: %d\n", lpn, line->id, gc);
+    // write_trace(ssd->write_trace_fp, "[%"PRIu64"] mark_page_valid; lpn: %"PRIu64", line: %d, gc: %d\n",
+    //               nsec_now_mono(), lpn, line->id, gc);
+
 }
 
 static void mark_block_free(struct ssd *ssd, struct ppa *ppa)
@@ -640,7 +684,9 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
     /* update rmap */
     set_rmap_ent(ssd, lpn, &new_ppa);
 
-    mark_page_valid(ssd, &new_ppa);
+    mark_page_valid(ssd, &new_ppa, true);
+
+    ssd->mbmw++;
 
     /* need to advance the write pointer here */
     ssd_advance_write_pointer(ssd);
@@ -714,11 +760,24 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
 {
     struct line_mgmt *lm = &ssd->lm;
     struct line *line = get_line(ssd, ppa);
+
+    // printf("mark_line_free; line: %d, vpc: %d\n", line->id, line->vpc);
+    // write_trace(ssd->write_trace_fp, "line %d free; vpc: %d\n", line->id, line->vpc);
+    objt_on_reclaim(&ssd->trace_store, line->id, line->vpc);
     line->ipc = 0;
     line->vpc = 0;
     /* move this line to free line list */
     QTAILQ_INSERT_TAIL(&lm->free_line_list, line, entry);
     lm->free_line_cnt++;
+}
+
+void nvme_fdp_stats(FemuCtrl *n)
+{
+    struct ssd *ssd = n->ssd;
+    uint64_t hbmw = ssd->hbmw;
+    uint64_t mbmw = ssd->mbmw;
+    double waf = (double)mbmw / hbmw;
+    printf("waf: %.2f (hbmw: %" PRIu64 ", mbmw: %" PRIu64 ")\n", waf, hbmw, mbmw);
 }
 
 static int do_gc(struct ssd *ssd, bool force)
@@ -735,9 +794,9 @@ static int do_gc(struct ssd *ssd, bool force)
     }
 
     ppa.g.blk = victim_line->id;
-    ftl_debug("GC-ing line:%d,ipc=%d,victim=%d,full=%d,free=%d\n", ppa.g.blk,
-              victim_line->ipc, ssd->lm.victim_line_cnt, ssd->lm.full_line_cnt,
-              ssd->lm.free_line_cnt);
+    printf("do_gc (force: %d); line: %d, vpc: %d, ipc: %d, victim: %d, full: %d, free: %d\n",
+           force, ppa.g.blk, victim_line->vpc, victim_line->ipc,
+           ssd->lm.victim_line_cnt, ssd->lm.full_line_cnt, ssd->lm.free_line_cnt);
 
     /* copy back valid data */
     for (ch = 0; ch < spp->nchs; ch++) {
@@ -779,7 +838,7 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     uint64_t sublat, maxlat = 0;
 
     if (end_lpn >= spp->tt_pgs) {
-        ftl_err("start_lpn=%"PRIu64",tt_pgs=%d\n", start_lpn, ssd->sp.tt_pgs);
+        ftl_err("ssd_read; slba: %"PRIu64", nlb: %d, start_lpn: %"PRIu64", tt_pgs: %d\n", lba, nsecs, start_lpn, ssd->sp.tt_pgs);
     }
 
     /* normal IO read path */
@@ -816,8 +875,11 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     int r;
 
     if (end_lpn >= spp->tt_pgs) {
-        ftl_err("start_lpn=%"PRIu64",tt_pgs=%d\n", start_lpn, ssd->sp.tt_pgs);
+        ftl_err("ssd_write; slba: %"PRIu64", nlb: %d, start_lpn: %"PRIu64", tt_pgs: %d\n", lba, len, start_lpn, ssd->sp.tt_pgs);
     }
+
+    // printf("ssd_write; slba: %"PRIu64", nlb: %d, start_lpn: %"PRIu64", end_lpn: %"PRIu64"\n",
+    //        lba, len, start_lpn, end_lpn);
 
     while (should_gc_high(ssd)) {
         /* perform GC here until !should_gc(ssd) */
@@ -828,8 +890,9 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
         ppa = get_maptbl_ent(ssd, lpn);
+
         if (mapped_ppa(&ppa)) {
-            /* update old page information first */
+           /* update old page information first */
             mark_page_invalid(ssd, &ppa);
             set_rmap_ent(ssd, INVALID_LPN, &ppa);
         }
@@ -841,8 +904,11 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         /* update rmap */
         set_rmap_ent(ssd, lpn, &ppa);
 
-        mark_page_valid(ssd, &ppa);
+        mark_page_valid(ssd, &ppa, false);
 
+        ssd->hbmw++;
+        ssd->mbmw++;
+ 
         /* need to advance the write pointer here */
         ssd_advance_write_pointer(ssd);
 
@@ -874,7 +940,7 @@ static void *ftl_thread(void *arg)
     /* FIXME: not safe, to handle ->to_ftl and ->to_poller gracefully */
     ssd->to_ftl = n->to_ftl;
     ssd->to_poller = n->to_poller;
-
+    
     while (1) {
         for (i = 1; i <= n->nr_pollers; i++) {
             if (!ssd->to_ftl[i] || !femu_ring_count(ssd->to_ftl[i]))
@@ -915,6 +981,8 @@ static void *ftl_thread(void *arg)
             }
         }
     }
+
+    fclose(ssd->write_trace_fp);
 
     return NULL;
 }
