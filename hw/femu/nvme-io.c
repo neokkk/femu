@@ -121,7 +121,7 @@ static void nvme_post_cqe(NvmeCQueue *cq, NvmeRequest *req)
     cqe->sq_head = cpu_to_le16(sq->head);
 
     if (req->cmd.opcode == NVME_CMD_WRITE)
-        bd_log_add(&n->bdc, "[end] process nvme write request; sqid %d, cqid: %d", sq->sqid, cq->cqid);
+        bd_log_add(&n->bdc, "[end] process nvme write request");
 
     if (cq->phys_contig) {
         addr = cq->dma_addr + cq->tail * n->cqe_size;
@@ -267,7 +267,7 @@ uint16_t nvme_rw(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req)
     int ret;
 
     if (rw->opcode == NVME_CMD_WRITE)
-        bd_log_add(&n->bdc, "[start] process nvme write request; sqid: %d", req->sq->sqid);
+        bd_log_add(&n->bdc, "[start] process nvme write request");
 
     req->is_write = (rw->opcode == NVME_CMD_WRITE) ? 1 : 0;
 

@@ -388,6 +388,7 @@ static void ssd_init_fdp_params(struct ssd *ssd, FemuCtrl *n)
     ftl_assert(fspp->runs >= line_sz);
     ftl_assert(fspp->runs % line_sz == 0);
 
+    fspp->lines_per_ru = fspp->runs / line_sz;
     fspp->rus_per_rg = (uint64_t)spp->tt_secs * spp->secsz / fspp->runs / fspp->nrg;
     fspp->tt_rus = fspp->rus_per_rg * fspp->nrg;
 
@@ -399,8 +400,8 @@ static void ssd_init_fdp_params(struct ssd *ssd, FemuCtrl *n)
         fspp->ruh_types[i] = endgrp->fdp.ruhs[i].ruht;
     }
 
-    printf("[FEMU] ssd_init_fdp_params; nruh: %d, tt_sz: %lu, rus_per_rg: %d, tt_rus: %d, ruamw: %lu, line_sz: %lu\n",
-           fspp->nruh, (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->ruamw, line_sz);
+    printf("[FEMU] ssd_init_fdp_params; nruh: %d, tt_sz: %lu, rus_per_rg: %d, tt_rus: %d, lines_per_ru: %d, ruamw: %lu, line_sz: %lu\n",
+           fspp->nruh, (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->lines_per_ru, fspp->ruamw, line_sz);
 }
 
 static void ssd_init_nand_page(struct nand_page *pg, struct ssdparams *spp)
@@ -1105,8 +1106,8 @@ void ssd_log(FemuCtrl *n)
     objt_dump_csv(&n->ssd->trace_store, fp);
     fclose(fp);
 
-    // bd_log_flush_to_file(&n->bdc, "breakdown.log");
-    // bd_log_clear(&n->bdc);
+    bd_log_flush_to_file(&n->bdc, "breakdown.log");
+    bd_log_clear(&n->bdc);
 }
 
 static void *ftl_thread(void *arg)
@@ -1136,10 +1137,10 @@ static void *ftl_thread(void *arg)
                 printf("[FEMU] to_ftl dequeue failed\n");
             }
 
-            // int opcode = req->cmd.opcode;
-            // if (opcode == NVME_CMD_WRITE) {
-            //     bd_log_add(&n->bdc, "[start] process command");
-            // }
+            int opcode = req->cmd.opcode;
+            if (opcode == NVME_CMD_WRITE) {
+                bd_log_add(&n->bdc, "[start] process command");
+            }
 
             ftl_assert(req);
             switch (req->cmd.opcode) {
@@ -1160,9 +1161,9 @@ static void *ftl_thread(void *arg)
             req->reqlat = lat;
             req->expire_time += lat;
 
-            // if (opcode == NVME_CMD_WRITE) {
-            //     bd_log_add(&n->bdc, "[end] process command");
-            // }
+            if (opcode == NVME_CMD_WRITE) {
+                bd_log_add(&n->bdc, "[end] process command");
+            }
 
             rc = femu_ring_enqueue(ssd->to_poller[i], (void *)&req, 1);
             if (rc != 1) {

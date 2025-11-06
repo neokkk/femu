@@ -167,6 +167,7 @@ struct fdp_ssdparams {
     uint64_t runs;
     uint16_t rus_per_rg; // (tt_sec * secsz) / runs / nrg;
     uint16_t tt_rus; // rus_per_rg * nrg
+    uint16_t lines_per_ru;
     uint8_t *ruh_types; //> nk; must be array with nruh length;
 
     // namespace

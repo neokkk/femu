@@ -130,15 +130,15 @@ static inline void objt_dump_csv(const ObjTraceStore *st, FILE *fp)
 {
     g_return_if_fail(st && st->accum && fp);
     fprintf(fp,
-        "id,copied_pgs,t_create_ns,t_full_ns,t_reclaim_ns,t_wall_create_ns,"
+        "id,ruhid,copied_pgs,t_create_ns,t_full_ns,t_reclaim_ns,t_wall_create_ns,"
         "create_to_full_ms,full_to_reclaim_ms,lifecycle_ms,gc\n");
     for (guint i = 0; i < st->accum->len; i++) {
         const obj_trace_t *tr = &g_array_index(st->accum, obj_trace_t, i);
         double c2f_ms = (tr->t_full_ns     ? (double)(tr->t_full_ns     - tr->t_create_ns)/1e6 : 0.0);
         double f2r_ms = (tr->t_full_ns && tr->t_reclaim_ns) ? (double)(tr->t_reclaim_ns - tr->t_full_ns)/1e6 : 0.0;
         double life_ms= (tr->t_reclaim_ns  ? (double)(tr->t_reclaim_ns  - tr->t_create_ns)/1e6 : 0.0);
-        fprintf(fp, "%" PRId64 ",%" PRIu32 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.3f,%.3f,%.3f,%d\n",
-                tr->id, tr->valid_pgs, tr->t_create_ns, tr->t_full_ns, tr->t_reclaim_ns, tr->t_wall_create_ns,
+        fprintf(fp, "%" PRId64 "%d,%" PRIu32 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.3f,%.3f,%.3f,%d\n",
+                tr->id, tr->ruhid, tr->valid_pgs, tr->t_create_ns, tr->t_full_ns, tr->t_reclaim_ns, tr->t_wall_create_ns,
                 c2f_ms, f2r_ms, life_ms, tr->gc);
     }
 }
