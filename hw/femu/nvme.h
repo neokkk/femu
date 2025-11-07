@@ -18,6 +18,7 @@
 #include "nand/nand.h"
 #include "timing-model/timing.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 #define NVME_ID_NS_LBADS(ns)                                                  \
     ((ns)->id_ns.lbaf[NVME_ID_NS_FLBAS_INDEX((ns)->id_ns.flbas)].lbads)
@@ -1477,6 +1478,7 @@ typedef struct FemuCtrl {
     uint8_t         femu_mode;
     uint8_t         lver; /* Coperd: OCSSD version, 0x1 -> OC1.2, 0x2 -> OC2.0 */
     uint32_t        memsz;
+    uint8_t         op_ratio;
     OcCtrlParams    oc_params;
 
     Oc12Ctrl  *oc12_ctrl;
@@ -1507,7 +1509,8 @@ typedef struct FemuCtrl {
         bool enabled;
         uint64_t runs;
         uint16_t nruh;
-        uint32_t nrg;
+        uint8_t nrg;
+        char *pi_ruhids;
     } fdp_params;
 
     struct ssd      *ssd;
@@ -1745,19 +1748,18 @@ static inline void nvme_fdp_stat_dec(uint64_t *a, uint64_t b)
     *a = ret > *a ? 0 : ret;
 }
 
-[[maybe_unused]]
-static bool nvme_fdp_reset_stats(FemuCtrl *n)
-{
-    NvmeEnduranceGroup *endgrp = &n->endgrp;
-    printf("[FEMU] nvme_fdp_reset_stats\n");
-    if (!n->endgrp.fdp.enabled) {
-        return false;
-    }
-    endgrp->fdp.hbmw = 0;
-    endgrp->fdp.mbmw = 0;
-    endgrp->fdp.mbe = 0;
-    return true;
-}
+// static bool nvme_fdp_reset_stats(FemuCtrl *n)
+// {
+//     NvmeEnduranceGroup *endgrp = &n->endgrp;
+//     printf("[FEMU] nvme_fdp_reset_stats\n");
+//     if (!n->endgrp.fdp.enabled) {
+//         return false;
+//     }
+//     endgrp->fdp.hbmw = 0;
+//     endgrp->fdp.mbmw = 0;
+//     endgrp->fdp.mbe = 0;
+//     return true;
+// }
 
 #define MN_MAX_LEN (64)
 #define ID_MAX_LEN (4)

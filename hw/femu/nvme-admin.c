@@ -699,6 +699,7 @@ static uint16_t nvme_set_feature(FemuCtrl *n, NvmeCmd *cmd, NvmeCqe *cqe)
     uint32_t nsid = le32_to_cpu(cmd->nsid);
     uint64_t prp1 = le64_to_cpu(cmd->dptr.prp1);
     uint64_t prp2 = le64_to_cpu(cmd->dptr.prp2);
+    bool fdp_enable = false;
 
     switch (dw10) {
     case NVME_ARBITRATION:
@@ -752,12 +753,12 @@ static uint16_t nvme_set_feature(FemuCtrl *n, NvmeCmd *cmd, NvmeCqe *cqe)
         n->features.async_config = dw11;
         break;
     case NVME_FDP_ENABLE:
-        bool enable = dw12 & 0x1;
-        printf("nvme_set_feature; fdp_enable: %d\n", enable);
-        n->features.fdp_enable = enable;
-        if (enable) {
-            nvme_fdp_reset_stats(n);
-        }
+        fdp_enable = dw12 & 0x1;
+        printf("nvme_set_feature; fdp_enable: %d\n", fdp_enable);
+        n->features.fdp_enable = fdp_enable;
+        // if (fdp_enable) {
+        //     nvme_fdp_reset_stats(n);
+        // }
         break;
     case NVME_SOFTWARE_PROGRESS_MARKER:
         n->features.sw_prog_marker = dw11;

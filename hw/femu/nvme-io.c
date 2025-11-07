@@ -583,41 +583,40 @@ void nvme_post_cqes_io(void *opaque)
     }
 }
 
-[[maybe_unused]]
-static bool nvme_update_ruh(NvmeNamespace *ns, uint16_t pid)
-{
-    NvmeEnduranceGroup *endgrp = ns->endgrp;
-    NvmeRuHandle *ruh;
-    NvmeReclaimUnit *ru;
-    // NvmeFdpEvent *e = NULL;
-    uint16_t ph, rg, ruhid;
-
-    if (!nvme_parse_pid(ns, pid, &ph, &rg)) {
-        return false;
-    }
-
-    ruhid = ns->fdp.phs[ph];
-
-    ruh = &endgrp->fdp.ruhs[ruhid];
-    ru = &ruh->rus[rg];
-
-    if (ru->ruamw) {
-        // if (log_event(ruh, FDP_EVT_RU_NOT_FULLY_WRITTEN)) {
-        //     e = nvme_fdp_alloc_event(n, &endgrp->fdp.host_events);
-        //     e->type = FDP_EVT_RU_NOT_FULLY_WRITTEN;
-        //     e->flags = FDPEF_PIV | FDPEF_NSIDV | FDPEF_LV;
-        //     e->pid = cpu_to_le16(pid);
-        //     e->nsid = cpu_to_le32(ns->params.nsid);
-        //     e->rgid = cpu_to_le16(rg);
-        //     e->ruhid = cpu_to_le16(ruhid);
-        // }
-
-        /* log (eventual) GC overhead of prematurely swapping the RU */
-        nvme_fdp_stat_inc(&endgrp->fdp.mbmw, nvme_l2b(ns, ru->ruamw));
-    }
-
-    ru->ruamw = ruh->ruamw;
-
-    return true;
-}
+// static bool nvme_update_ruh(NvmeNamespace *ns, uint16_t pid)
+// {
+//     NvmeEnduranceGroup *endgrp = ns->endgrp;
+//     NvmeRuHandle *ruh;
+//     NvmeReclaimUnit *ru;
+//     // NvmeFdpEvent *e = NULL;
+//     uint16_t ph, rg, ruhid;
+//
+//     if (!nvme_parse_pid(ns, pid, &ph, &rg)) {
+//         return false;
+//     }
+//
+//     ruhid = ns->fdp.phs[ph];
+//
+//     ruh = &endgrp->fdp.ruhs[ruhid];
+//     ru = &ruh->rus[rg];
+//
+//     if (ru->ruamw) {
+//         // if (log_event(ruh, FDP_EVT_RU_NOT_FULLY_WRITTEN)) {
+//         //     e = nvme_fdp_alloc_event(n, &endgrp->fdp.host_events);
+//         //     e->type = FDP_EVT_RU_NOT_FULLY_WRITTEN;
+//         //     e->flags = FDPEF_PIV | FDPEF_NSIDV | FDPEF_LV;
+//         //     e->pid = cpu_to_le16(pid);
+//         //     e->nsid = cpu_to_le32(ns->params.nsid);
+//         //     e->rgid = cpu_to_le16(rg);
+//         //     e->ruhid = cpu_to_le16(ruhid);
+//         // }
+//
+//         /* log (eventual) GC overhead of prematurely swapping the RU */
+//         nvme_fdp_stat_inc(&endgrp->fdp.mbmw, nvme_l2b(ns, ru->ruamw));
+//     }
+//
+//     ru->ruamw = ruh->ruamw;
+//
+//     return true;
+// }
 

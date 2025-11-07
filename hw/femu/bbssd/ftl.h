@@ -165,6 +165,7 @@ struct fdp_ssdparams {
     uint64_t runs;
     uint16_t rus_per_rg; // (tt_sec * secsz) / runs / nrg;
     uint16_t tt_rus; // rus_per_rg * nrg
+    uint8_t *ruh_types; //> nk; must be array with nruh length;
 
     // namespace
     uint8_t lbafi;
@@ -178,7 +179,8 @@ typedef struct line {
     QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
     /* position in the priority queue for victim lines */
     size_t pos;
-    struct ru *ru;
+    struct ru_handle *ruh;
+    bool gc; // for GC or not
 } line;
 
 /* wp: record next write addr */
@@ -191,17 +193,13 @@ struct write_pointer {
     int pl;
 };
 
-typedef struct ru {
-    int ruhid, rgid;
-    struct line *line;
-    uint64_t ruamw;
-} ru;
-
 typedef struct ru_handle {
     int id;
-    // QTAILQ_HEAD(lines, line) lines;
-    struct ru *ru; // current line ptr
-    struct write_pointer wp;
+    uint8_t ruht;
+    uint8_t ruha;
+    uint64_t ruamw;
+    struct write_pointer *wps; //> nrg
+    struct write_pointer *gc_wpp;
 } ru_handle;
 
 struct line_mgmt {
@@ -231,6 +229,7 @@ struct ssd {
     struct ppa *maptbl; /* page level mapping table */
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
     struct line_mgmt lm;
+    struct write_pointer **gc_wpps; //> per RUH
 
     NvmeEnduranceGroup *endgrp;
     NvmeNamespace *ns;
