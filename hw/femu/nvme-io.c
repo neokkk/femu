@@ -320,6 +320,88 @@ static uint16_t nvme_dsm(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
     return NVME_SUCCESS;
 }
 
+static inline uint16_t nvme_make_pid(NvmeNamespace *ns, uint16_t rg,
+                                     uint16_t ph)
+{
+    uint16_t rgif = ns->endgrp->fdp.rgif;
+    if (!rgif) {
+        return ph;
+    }
+    return (rg << (16 - rgif)) | ph;
+}
+
+static uint16_t nvme_io_mgmt_recv_ruhs(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
+                                       size_t len)
+{
+    uint64_t prp1 = le64_to_cpu(cmd->dptr.prp1);
+    uint64_t prp2 = le64_to_cpu(cmd->dptr.prp2);
+    NvmeEnduranceGroup *endgrp;
+    NvmeRuhStatus *hdr;
+    NvmeRuhStatusDescr *ruhsd;
+    unsigned int nruhsd;
+    uint16_t rg, ph, *ruhid;
+    size_t trans_len;
+    g_autofree uint8_t *buf = NULL;
+
+    if (!n->endgrp.fdp.enabled) {
+        return NVME_FDP_DISABLED | NVME_DNR;
+    }
+
+    endgrp = ns->endgrp;
+
+    nruhsd = ns->fdp.nphs * endgrp->fdp.nrg;
+    trans_len = sizeof(NvmeRuhStatus) + nruhsd * sizeof(NvmeRuhStatusDescr);
+    buf = g_malloc(trans_len);
+
+    trans_len = MIN(trans_len, len);
+
+    hdr = (NvmeRuhStatus *)buf;
+    ruhsd = (NvmeRuhStatusDescr *)(buf + sizeof(NvmeRuhStatus));
+
+    hdr->nruhsd = cpu_to_le16(nruhsd);
+
+    ruhid = ns->fdp.phs;
+
+    for (ph = 0; ph < ns->fdp.nphs; ph++, ruhid++) {
+        NvmeRuHandle *ruh = &endgrp->fdp.ruhs[*ruhid];
+
+        for (rg = 0; rg < endgrp->fdp.nrg; rg++, ruhsd++) {
+            uint16_t pid = nvme_make_pid(ns, rg, ph);
+
+            ruhsd->pid = cpu_to_le16(pid);
+            ruhsd->ruhid = *ruhid;
+            ruhsd->earutr = 0;
+            ruhsd->ruamw = cpu_to_le64(ruh->rus[rg].ruamw);
+        }
+    }
+
+    return dma_write_prp(n, buf, trans_len, prp1, prp2);
+}
+
+static uint16_t nvme_verify(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
+                         NvmeRequest *req)
+{
+    return NVME_SUCCESS;
+}
+
+static uint16_t nvme_io_mgmt_recv(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
+                         NvmeRequest *req)
+{
+    uint32_t dw10 = le32_to_cpu(cmd->cdw10);
+    uint32_t numd = le32_to_cpu(cmd->cdw11);
+    uint8_t mode = (dw10 & 0xff);
+    size_t len = (numd + 1) << 2;
+
+    switch (mode) {
+        case NVME_IOMR_MO_NOP:
+            return NVME_SUCCESS;
+        case NVME_IOMR_MO_RUH_STATUS:
+            return nvme_io_mgmt_recv_ruhs(n, ns, cmd, len);
+        default:
+            return NVME_INVALID_FIELD | NVME_DNR;
+    }
+}
+
 static uint16_t nvme_compare(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
                              NvmeRequest *req)
 {
@@ -440,6 +522,10 @@ static uint16_t nvme_io_cmd(FemuCtrl *n, NvmeCmd *cmd, NvmeRequest *req)
             return nvme_dsm(n, ns, cmd, req);
         }
         return NVME_INVALID_OPCODE | NVME_DNR;
+    case NVME_CMD_VERIFY:
+        return nvme_verify(n, ns, cmd, req);
+    case NVME_CMD_IO_MGMT_RECV:
+        return nvme_io_mgmt_recv(n, ns, cmd, req);
     case NVME_CMD_COMPARE:
         if (NVME_ONCS_COMPARE & n->oncs) {
             return nvme_compare(n, ns, cmd, req);

@@ -1,4 +1,5 @@
 #include "ftl.h"
+#include "hw/femu/nvme.h"
 #include "hw/femu/util.h"
 
 //#define FEMU_DEBUG_FTL
@@ -148,9 +149,12 @@ static struct line *get_next_free_line(struct ssd *ssd)
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
 
+    printf("[FEMU] get_next_free_line; free_line_cnt: %d, victim_line_cnt: %d, full_line_cnt: %d\n",
+           lm->free_line_cnt, lm->victim_line_cnt, lm->full_line_cnt);
+
     curline = QTAILQ_FIRST(&lm->free_line_list);
     if (!curline) {
-        ftl_err("No free lines left in [%s] !!!!\n", ssd->ssdname);
+        printf("[FEMU] no free lines left\n");
         return NULL;
     }
 
@@ -244,6 +248,26 @@ static void check_params(struct ssdparams *spp)
 
     //ftl_assert(is_power_of_2(spp->luns_per_ch));
     //ftl_assert(is_power_of_2(spp->nchs));
+}
+
+static void ssd_init_fdp_params(struct ssd *ssd, FemuCtrl *n)
+{
+    struct ssdparams *spp = &ssd->sp;
+    struct fdp_ssdparams *fspp = &ssd->fsp;
+    NvmeEnduranceGroup *endgrp = &n->endgrp;
+
+    fspp->nrg = endgrp->fdp.nrg;
+    fspp->nruh = endgrp->fdp.nruh;
+    fspp->runs = endgrp->fdp.runs;
+    fspp->rus_per_rg = (uint64_t)spp->tt_secs * spp->secsz / fspp->runs / fspp->nrg;
+    fspp->tt_rus = fspp->rus_per_rg * fspp->nrg;
+    fspp->lbafi = NVME_ID_NS_FLBAS_INDEX(ssd->ns->id_ns.flbas);
+    fspp->ruamw = endgrp->fdp.runs >> ssd->ns->id_ns.lbaf->lbads;
+
+    endgrp->fdp.enabled = true;
+
+    printf("[FEMU] ssd_init_params; tt_sz: %lud, rus_per_rg: %d, tt_rus: %d, ruamw: %lu\n",
+           (uint64_t)spp->tt_secs * spp->secsz, fspp->rus_per_rg, fspp->tt_rus, fspp->ruamw);
 }
 
 static void ssd_init_params(struct ssdparams *spp, FemuCtrl *n)
@@ -393,7 +417,12 @@ void ssd_init(FemuCtrl *n)
 
     ftl_assert(ssd);
 
+    ssd->gc_count = 0;
+    ssd->endgrp = &n->endgrp;
+    ssd->ns = &n->namespaces[0];
+
     ssd_init_params(spp, n);
+    ssd_init_fdp_params(ssd, n);
 
     ssd->write_trace_fp = fopen("write_trace.log", "w");
     if (!ssd->write_trace_fp) {
@@ -550,7 +579,7 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
         break;
 
     default:
-        ftl_err("Unsupported NAND command: 0x%x\n", c);
+        printf("[FEMU] unsupported NAND command: 0x%x\n", c);
     }
 
     return lat;
@@ -686,7 +715,7 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
 
     mark_page_valid(ssd, &new_ppa, true);
 
-    ssd->mbmw++;
+    nvme_fdp_stat_inc(&ssd->endgrp->fdp.mbmw, 1);
 
     /* need to advance the write pointer here */
     ssd_advance_write_pointer(ssd);
@@ -771,15 +800,6 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
     lm->free_line_cnt++;
 }
 
-void nvme_fdp_stats(FemuCtrl *n)
-{
-    struct ssd *ssd = n->ssd;
-    uint64_t hbmw = ssd->hbmw;
-    uint64_t mbmw = ssd->mbmw;
-    double waf = (double)mbmw / hbmw;
-    printf("waf: %.2f (hbmw: %" PRIu64 ", mbmw: %" PRIu64 ")\n", waf, hbmw, mbmw);
-}
-
 static int do_gc(struct ssd *ssd, bool force)
 {
     struct line *victim_line = NULL;
@@ -794,9 +814,8 @@ static int do_gc(struct ssd *ssd, bool force)
     }
 
     ppa.g.blk = victim_line->id;
-    printf("do_gc (force: %d); line: %d, vpc: %d, ipc: %d, victim: %d, full: %d, free: %d\n",
-           force, ppa.g.blk, victim_line->vpc, victim_line->ipc,
-           ssd->lm.victim_line_cnt, ssd->lm.full_line_cnt, ssd->lm.free_line_cnt);
+    printf("do_gc (force: %d); line: %d, count: %d, vpc: %d, ipc: %d\n",
+           force, ppa.g.blk, ++ssd->gc_count, victim_line->vpc, victim_line->ipc);
 
     /* copy back valid data */
     for (ch = 0; ch < spp->nchs; ch++) {
@@ -838,7 +857,7 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     uint64_t sublat, maxlat = 0;
 
     if (end_lpn >= spp->tt_pgs) {
-        ftl_err("ssd_read; slba: %"PRIu64", nlb: %d, start_lpn: %"PRIu64", tt_pgs: %d\n", lba, nsecs, start_lpn, ssd->sp.tt_pgs);
+        printf("[FEMU] ssd_read; start_lpn: %"PRIu64", tt_pgs: %d\n", start_lpn, ssd->sp.tt_pgs);
     }
 
     /* normal IO read path */
@@ -862,6 +881,8 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     return maxlat;
 }
 
+static int count = 0;
+
 static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 {
     uint64_t lba = req->slba;
@@ -873,13 +894,16 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     uint64_t lpn;
     uint64_t curlat = 0, maxlat = 0;
     int r;
+    NvmeNamespace *ns = req->ns;
+    NvmeRwCmd *rw = (NvmeRwCmd *)&req->cmd;
+    uint32_t dw12 = le32_to_cpu(req->cmd.cdw12);
+    uint8_t dtype = (dw12 >> 20) & 0xf;
+    uint16_t pid = le16_to_cpu((rw->dsmgmt >> 16) & 0xffff);
+    uint16_t phid, rgid, ruhid;
 
     if (end_lpn >= spp->tt_pgs) {
-        ftl_err("ssd_write; slba: %"PRIu64", nlb: %d, start_lpn: %"PRIu64", tt_pgs: %d\n", lba, len, start_lpn, ssd->sp.tt_pgs);
+        printf("[FEMU] ssd_write; start_lpn: %"PRIu64", tt_pgs: %d\n", start_lpn, ssd->sp.tt_pgs);
     }
-
-    // printf("ssd_write; slba: %"PRIu64", nlb: %d, start_lpn: %"PRIu64", end_lpn: %"PRIu64"\n",
-    //        lba, len, start_lpn, end_lpn);
 
     while (should_gc_high(ssd)) {
         /* perform GC here until !should_gc(ssd) */
@@ -887,6 +911,18 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         if (r == -1)
             break;
     }
+
+    if (dtype != NVME_DIRECTIVE_DATA_PLACEMENT ||
+        !nvme_parse_pid(ns, pid, &phid, &rgid)) {
+        phid = 0;
+        rgid = 0;
+    }
+
+    ruhid = ns->fdp.phs[phid];
+
+    if (++count < 10)
+        printf("ssd_write; rgid: %d, ruhid: %d, slba: %"PRIu64", nlb: %d, start_lpn: %"PRIu64", end_lpn: %"PRIu64"\n",
+               rgid, ruhid, lba, len, start_lpn, end_lpn);
 
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
         ppa = get_maptbl_ent(ssd, lpn);
@@ -906,8 +942,8 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 
         mark_page_valid(ssd, &ppa, false);
 
-        ssd->hbmw++;
-        ssd->mbmw++;
+        nvme_fdp_stat_inc(&ns->endgrp->fdp.hbmw, 1);
+        nvme_fdp_stat_inc(&ns->endgrp->fdp.mbmw, 1);
  
         /* need to advance the write pointer here */
         ssd_advance_write_pointer(ssd);
@@ -948,7 +984,7 @@ static void *ftl_thread(void *arg)
 
             rc = femu_ring_dequeue(ssd->to_ftl[i], (void *)&req, 1);
             if (rc != 1) {
-                printf("FEMU: FTL to_ftl dequeue failed\n");
+                printf("[FEMU] to_ftl dequeue failed\n");
             }
 
             ftl_assert(req);
@@ -963,8 +999,7 @@ static void *ftl_thread(void *arg)
                 lat = 0;
                 break;
             default:
-                //ftl_err("FTL received unkown request type, ERROR\n");
-                ;
+                printf("FTL received unkown request type, ERROR\n");
             }
 
             req->reqlat = lat;
@@ -972,7 +1007,7 @@ static void *ftl_thread(void *arg)
 
             rc = femu_ring_enqueue(ssd->to_poller[i], (void *)&req, 1);
             if (rc != 1) {
-                ftl_err("FTL to_poller enqueue failed\n");
+                printf("[FEMU] to_poller enqueue failed\n");
             }
 
             /* clean one line if needed (in the background) */

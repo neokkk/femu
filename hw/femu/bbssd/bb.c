@@ -4,7 +4,7 @@
 static void bb_init_ctrl_str(FemuCtrl *n)
 {
     static int fsid_vbb = 0;
-    const char *vbbssd_mn = "FEMU BlackBox-SSD Controller";
+    const char *vbbssd_mn = "FEMU FDP-enabled SSD Controller";
     const char *vbbssd_sn = "vSSD";
 
     nvme_set_ctrl_name(n, vbbssd_mn, vbbssd_sn, &fsid_vbb);
@@ -20,7 +20,7 @@ static void bb_init(FemuCtrl *n, Error **errp)
     ssd->dataplane_started_ptr = &n->dataplane_started;
     ssd->ssdname = (char *)n->devname;
 
-    femu_debug("Starting FEMU in Blackbox-SSD mode ...\n");
+    printf("[FEMU] FDP-enabled SSD mode start...\n");
 
     ssd_init(n);
 }
@@ -101,10 +101,6 @@ static uint16_t bb_admin_cmd(FemuCtrl *n, NvmeCmd *cmd)
     }
 }
 
-enum NvmeLogIdentifier {
-    NVME_LOG_FDP_STATS                  = 0x22,
-};
-
 static uint16_t bb_get_log(struct FemuCtrl *n, NvmeCmd *cmd)
 {
     uint32_t dw10 = le32_to_cpu(cmd->cdw10);
@@ -113,10 +109,6 @@ static uint16_t bb_get_log(struct FemuCtrl *n, NvmeCmd *cmd)
     printf("[FEMU] bb_get_log; lid: %d\n", lid);
 
     switch (lid) {
-        case NVME_LOG_FDP_STATS:
-            printf("fdp_stats\n");
-            nvme_fdp_stats(n);
-        break;
         default:
             ssd_log(n);
     }
