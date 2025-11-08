@@ -117,25 +117,24 @@ static void ssd_init_lines(struct ssd *ssd)
     ftl_assert(lm->free_line_cnt == lm->tt_lines);
     lm->victim_line_cnt = 0;
     lm->full_line_cnt = 0;
-
 }
 
-static void ssd_init_write_pointer(struct ssd *ssd)
+static void ssd_init_write_pointer(struct ssd *ssd, struct write_pointer *wpp, bool gc)
 {
-    struct write_pointer *wpp = &ssd->wp;
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
 
     curline = QTAILQ_FIRST(&lm->free_line_list);
     QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
     lm->free_line_cnt--;
+    curline->gc = gc;
 
     /* wpp->curline is always our next-to-write super-block */
     wpp->curline = curline;
     wpp->ch = 0;
     wpp->lun = 0;
     wpp->pg = 0;
-    wpp->blk = 0;
+    wpp->blk = curline->id;
     wpp->pl = 0;
 }
 
@@ -189,7 +188,7 @@ static void ssd_advance_write_pointer(struct ssd *ssd)
                     ftl_assert(wpp->curline->ipc == 0);
                     QTAILQ_INSERT_TAIL(&lm->full_line_list, wpp->curline, entry);
                     lm->full_line_cnt++;
-                    // write_trace(ssd->write_trace_fp, "line %d full\n", wpp->curline->id);
+                    // write_trace(n->write_trace_fp, "line %d full\n", wpp->curline->id);
                 } else {
                     ftl_assert(wpp->curline->vpc >= 0 && wpp->curline->vpc < spp->pgs_per_line);
                     /* there must be some invalid pages in this line */
@@ -208,7 +207,7 @@ static void ssd_advance_write_pointer(struct ssd *ssd)
                     abort();
                 }
                 // printf("get_next_free_line; line: %d\n", wpp->curline->id);
-                // write_trace(ssd->write_trace_fp, "line %d allocated\n", wpp->curline->id);
+                // write_trace(n->write_trace_fp, "line %d allocated\n", wpp->curline->id);
                 wpp->blk = wpp->curline->id;
                 objt_on_create(&ssd->trace_store, wpp->curline->id, false);
                 check_addr(wpp->blk, spp->blks_per_pl);
@@ -407,6 +406,8 @@ void ssd_log(FemuCtrl *n)
         return;
     }
     objt_dump_csv(&n->ssd->trace_store, fp);
+    fwrite("\n", 1, 1, n->write_trace_fp);
+    fflush(n->write_trace_fp);
     fclose(fp);
 }
 
@@ -424,8 +425,8 @@ void ssd_init(FemuCtrl *n)
     ssd_init_params(spp, n);
     ssd_init_fdp_params(ssd, n);
 
-    ssd->write_trace_fp = fopen("write_trace.log", "w");
-    if (!ssd->write_trace_fp) {
+    n->write_trace_fp = fopen("write_trace.log", "w");
+    if (!n->write_trace_fp) {
         printf("Fail to open for write trace log\n");
         exit(-1);
     }
@@ -446,7 +447,16 @@ void ssd_init(FemuCtrl *n)
     ssd_init_lines(ssd);
 
     /* initialize write pointer, this is how we allocate new pages for writes */
-    ssd_init_write_pointer(ssd);
+    int nruh = ssd->fsp.nruh;
+    ssd->wps = g_malloc0(sizeof(struct write_pointer) * nruh);
+    for (int i = 0; i < nruh; i++) {
+        ssd_init_write_pointer(ssd, &ssd->wps[i], false);
+    }
+
+    ssd->gc_wps = g_malloc0(sizeof(struct write_pointer) * nruh);
+    for (int i = 0; i < nruh; i++) {
+        ssd_init_write_pointer(ssd, &ssd->gc_wps[i], true);
+    }
 
     qemu_thread_create(&ssd->ftl_thread, "FEMU-FTL-Thread", ftl_thread, n,
                        QEMU_THREAD_JOINABLE);
@@ -619,7 +629,7 @@ static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
 
     // uint64_t lpn = get_rmap_ent(ssd, ppa);
     // printf("mark_page_invalid; lpn: %"PRIu64" line: %d\n", lpn, line->id);
-    // write_trace(ssd->write_trace_fp, "[%"PRIu64"] mark_page_invalid; lpn: %"PRIu64" line: %d\n",
+    // write_trace(n->write_trace_fp, "[%"PRIu64"] mark_page_invalid; lpn: %"PRIu64" line: %d\n",
     //                   nsec_now_mono(), lpn, line->id);
 
     /* Adjust the position of the victime line in the pq under over-writes */
@@ -662,7 +672,7 @@ static void mark_page_valid(struct ssd *ssd, struct ppa *ppa, bool gc)
 
     // uint64_t lpn = get_rmap_ent(ssd, ppa);
     // printf("mark_page_valid; lpn: %"PRIu64" line: %d, gc: %d\n", lpn, line->id, gc);
-    // write_trace(ssd->write_trace_fp, "[%"PRIu64"] mark_page_valid; lpn: %"PRIu64", line: %d, gc: %d\n",
+    // write_trace(n->write_trace_fp, "[%"PRIu64"] mark_page_valid; lpn: %"PRIu64", line: %d, gc: %d\n",
     //               nsec_now_mono(), lpn, line->id, gc);
 
 }
@@ -791,7 +801,7 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
     struct line *line = get_line(ssd, ppa);
 
     // printf("mark_line_free; line: %d, vpc: %d\n", line->id, line->vpc);
-    // write_trace(ssd->write_trace_fp, "line %d free; vpc: %d\n", line->id, line->vpc);
+    // write_trace(n->write_trace_fp, "line %d free; vpc: %d\n", line->id, line->vpc);
     objt_on_reclaim(&ssd->trace_store, line->id, line->vpc);
     line->ipc = 0;
     line->vpc = 0;
@@ -800,7 +810,7 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
     lm->free_line_cnt++;
 }
 
-static int do_gc(struct ssd *ssd, bool force)
+static int do_gc(struct ssd *ssd, bool force, FemuCtrl *n)
 {
     struct line *victim_line = NULL;
     struct ssdparams *spp = &ssd->sp;
@@ -812,6 +822,8 @@ static int do_gc(struct ssd *ssd, bool force)
     if (!victim_line) {
         return -1;
     }
+
+    write_trace(n->write_trace_fp, "%lu [start] do_gc; force: %d, line: %d\n", nsec_now_mono(), force, victim_line->id);
 
     ppa.g.blk = victim_line->id;
     printf("do_gc (force: %d); line: %d, count: %d, vpc: %d, ipc: %d\n",
@@ -841,6 +853,7 @@ static int do_gc(struct ssd *ssd, bool force)
 
     /* update line status */
     mark_line_free(ssd, &ppa);
+    write_trace(n->write_trace_fp, "%lu [end] do_gc\n", nsec_now_mono());
 
     return 0;
 }
@@ -883,10 +896,10 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
 
 static int count = 0;
 
-static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
+static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req, FemuCtrl *n)
 {
-    uint64_t lba = req->slba;
     struct ssdparams *spp = &ssd->sp;
+    uint64_t lba = req->slba;
     int len = req->nlb;
     uint64_t start_lpn = lba / spp->secs_per_pg;
     uint64_t end_lpn = (lba + len - 1) / spp->secs_per_pg;
@@ -907,10 +920,12 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 
     while (should_gc_high(ssd)) {
         /* perform GC here until !should_gc(ssd) */
-        r = do_gc(ssd, true);
+        r = do_gc(ssd, true, n);
         if (r == -1)
             break;
     }
+
+    write_trace(n->write_trace_fp, "%lu [start] ssd_write; lba: %ld\n", nsec_now_mono(), start_lpn);
 
     if (dtype != NVME_DIRECTIVE_DATA_PLACEMENT ||
         !nvme_parse_pid(ns, pid, &phid, &rgid)) {
@@ -957,6 +972,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         maxlat = (curlat > maxlat) ? curlat : maxlat;
     }
 
+    write_trace(n->write_trace_fp, "%lu [end] ssd_write\n", nsec_now_mono());
     return maxlat;
 }
 
@@ -990,7 +1006,7 @@ static void *ftl_thread(void *arg)
             ftl_assert(req);
             switch (req->cmd.opcode) {
             case NVME_CMD_WRITE:
-                lat = ssd_write(ssd, req);
+                lat = ssd_write(ssd, req, n);
                 break;
             case NVME_CMD_READ:
                 lat = ssd_read(ssd, req);
@@ -999,7 +1015,7 @@ static void *ftl_thread(void *arg)
                 lat = 0;
                 break;
             default:
-                printf("FTL received unkown request type, ERROR\n");
+                ftl_err("FTL received unkown request type: %d\n", req->cmd.opcode);
             }
 
             req->reqlat = lat;
@@ -1012,12 +1028,12 @@ static void *ftl_thread(void *arg)
 
             /* clean one line if needed (in the background) */
             if (should_gc(ssd)) {
-                do_gc(ssd, false);
+                do_gc(ssd, false, n);
             }
         }
     }
 
-    fclose(ssd->write_trace_fp);
+    fclose(n->write_trace_fp);
 
     return NULL;
 }

@@ -163,6 +163,8 @@ struct fdp_ssdparams {
     uint64_t runs;
     uint16_t rus_per_rg; // (tt_sec * secsz) / runs / nrg;
     uint16_t tt_rus; // rus_per_rg * nrg
+    uint16_t lines_per_ru;
+    uint8_t *ruh_types; //> nk; must be array with nruh length;
 
     // namespace
     uint8_t lbafi;
@@ -175,7 +177,8 @@ typedef struct line {
     int vpc; /* valid page count in this line */
     QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
     /* position in the priority queue for victim lines */
-    size_t                  pos;
+    size_t pos;
+    bool gc;
 } line;
 
 /* wp: record next write addr */
@@ -214,7 +217,8 @@ struct ssd {
     struct ssd_channel *ch;
     struct ppa *maptbl; /* page level mapping table */
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
-    struct write_pointer wp;
+    struct write_pointer *wps;
+    struct write_pointer *gc_wps;
     struct line_mgmt lm;
 
     int gc_count;
@@ -228,7 +232,6 @@ struct ssd {
     bool *dataplane_started_ptr;
     QemuThread ftl_thread;
 
-    FILE *write_trace_fp;
     ObjTraceStore trace_store; //> nk
 };
 

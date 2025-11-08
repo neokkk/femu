@@ -1454,6 +1454,7 @@ typedef struct FemuCtrl {
         uint16_t nruh;
         uint32_t nrg;
     } fdp_params;
+    FILE *write_trace_fp;
 
     BbCtrlParams bb_params;
 

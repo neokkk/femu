@@ -1,4 +1,5 @@
 #include "./nvme.h"
+#include "./util.h"
 
 static uint16_t nvme_io_cmd(FemuCtrl *n, NvmeCmd *cmd, NvmeRequest *req);
 
@@ -117,6 +118,8 @@ static void nvme_post_cqe(NvmeCQueue *cq, NvmeRequest *req)
         nvme_addr_write(n, addr, (void *)cqe, sizeof(*cqe));
     }
 
+    if (req->cmd_opcode == NVME_CMD_WRITE)
+        write_trace(n->write_trace_fp, "%lu [end] nvme request\n", nsec_now_mono());
     nvme_inc_cq_tail(cq);
 }
 
@@ -253,6 +256,8 @@ uint16_t nvme_rw(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req)
     int ret;
 
     req->is_write = (rw->opcode == NVME_CMD_WRITE) ? 1 : 0;
+    if (req->is_write)
+        write_trace(n->write_trace_fp, "%lu [start] nvme request\n", nsec_now_mono());
 
     err = femu_nvme_rw_check_req(n, ns, cmd, req, slba, elba, nlb, ctrl,
                                  data_size, meta_size);
