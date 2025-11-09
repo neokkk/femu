@@ -1513,6 +1513,8 @@ typedef struct FemuCtrl {
         char *pi_ruhids;
     } fdp_params;
 
+    FILE *write_trace_fp;
+
     struct ssd      *ssd;
     SsdDramBackend  *mbe;
     int             completed;

@@ -145,6 +145,8 @@ static void ssd_init_ruhs(struct ssd *ssd)
     struct line *line = NULL;
 
     printf("[FEMU] ssd_init_ruhs; nruh: %d\n", fspp->nruh);
+    objt_store_init(&ssd->trace_store, fspp->tt_rus);
+
     ssd->ruhs = g_malloc0(sizeof(struct ru_handle) * fspp->nruh);
     ssd->gc_wpps = g_malloc0(sizeof(struct write_pointer *) * fspp->nruh);
 
@@ -160,6 +162,7 @@ static void ssd_init_ruhs(struct ssd *ssd)
             line = ruh->wps[j].curline;
             line->ruh = ruh;
             line->gc = false;
+            objt_on_create(&ssd->trace_store, line->id, ruh->id, false);
         }
 
         //> nk: for GC
@@ -174,6 +177,7 @@ static void ssd_init_ruhs(struct ssd *ssd)
                 line = gc_shared_wpp->curline;
                 line->ruh = ruh;
                 line->gc = true;
+                objt_on_create(&ssd->trace_store, line->id, ruh->id, true);
             }
             ssd->gc_wpps[i] = gc_shared_wpp;
         } else if (ruh->ruht == NVME_RUHT_PERSISTENTLY_ISOLATED) {
@@ -182,6 +186,7 @@ static void ssd_init_ruhs(struct ssd *ssd)
             line = ssd->gc_wpps[i]->curline;
             line->ruh = ruh;
             line->gc = true;
+            objt_on_create(&ssd->trace_store, line->id, ruh->id, true);
         } else {
             fprintf(stderr, "Cannot reach here\n");
             abort();
@@ -464,11 +469,18 @@ void ssd_init(FemuCtrl *n)
 
     ftl_assert(ssd);
 
+    ssd->gc_count = 0;
     ssd->endgrp = &n->endgrp;
     ssd->ns = &n->namespaces[0];
 
     ssd_init_params(spp, n);
     ssd_init_fdp_params(ssd, n);
+
+    n->write_trace_fp = fopen("write_trace.log", "w");
+    if (!n->write_trace_fp) {
+        printf("Fail to open for write trace log\n");
+        exit(-1);
+    }
 
     /* initialize ssd internal layout architecture */
     ssd->ch = g_malloc0(sizeof(struct ssd_channel) * spp->nchs);
@@ -491,6 +503,22 @@ void ssd_init(FemuCtrl *n)
 
     qemu_thread_create(&ssd->ftl_thread, "FEMU-FTL-Thread", ftl_thread, n,
                        QEMU_THREAD_JOINABLE);
+}
+
+void ssd_log(FemuCtrl *n)
+{
+    FILE *fp;
+    printf("ssd_log\n");
+    fp = fopen("log.csv", "w");
+    if (fp == NULL) {
+        perror("Fail to open file");
+        return;
+    }
+    objt_dump_csv(&n->ssd->trace_store, fp);
+    fclose(fp);
+
+    fwrite("\n", 1, 1, n->write_trace_fp);
+    fflush(n->write_trace_fp);
 }
 
 static inline bool valid_ppa(struct ssd *ssd, struct ppa *ppa)
@@ -759,7 +787,7 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
     struct nand_lun *new_lun;
     struct ru_handle *ruh = get_ruh(ssd, old_ppa);
     uint64_t lpn = get_rmap_ent(ssd, old_ppa);
-    struct line *new_line = NULL;
+    struct line *new_line = NULL, *prev_line;
 
     ftl_assert(valid_lpn(ssd, lpn));
     new_ppa = get_new_page(ssd, ruh->gc_wpp);
@@ -774,11 +802,14 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
 
     /* need to advance the write pointer here */
     // prev_line = ruh->gc_wpp->curline;
+    prev_line = ruh->gc_wpp->curline;
     new_line = ssd_advance_write_pointer(ssd, ruh->gc_wpp);
 
     if (new_line != NULL) {
         new_line->ruh = ruh;
         new_line->gc = true;
+        objt_on_create(&ssd->trace_store, new_line->id, ruh->id, true);
+        objt_on_full(&ssd->trace_store, prev_line->id);
     }
 
     if (ssd->sp.enable_gc_delay) {
@@ -850,6 +881,7 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
 {
     struct line_mgmt *lm = &ssd->lm;
     struct line *line = get_line(ssd, ppa);
+    objt_on_reclaim(&ssd->trace_store, line->id, line->vpc);
     line->ipc = 0;
     line->vpc = 0;
     line->ruh = NULL;
@@ -859,7 +891,7 @@ static void mark_line_free(struct ssd *ssd, struct ppa *ppa)
     lm->free_line_cnt++;
 }
 
-static int do_gc(struct ssd *ssd, bool force)
+static int do_gc(struct ssd *ssd, bool force, FemuCtrl *n)
 {
     struct line *victim_line = NULL;
     struct ssdparams *spp = &ssd->sp;
@@ -873,8 +905,10 @@ static int do_gc(struct ssd *ssd, bool force)
     }
 
     ppa.g.blk = victim_line->id;
-    printf("[FEMU] do_gc; line: %d, gc: %d, ruhid: %d, vpc: %d, ipc: %d, pos: %"PRIu64" force: %d\n",
-           ppa.g.blk, victim_line->gc, victim_line->ruh->id, victim_line->vpc, victim_line->ipc, victim_line->pos, force);
+
+    printf("do_gc (force: %d); line: %d, count: %d, vpc: %d, ipc: %d\n",
+           force, ppa.g.blk, ++ssd->gc_count, victim_line->vpc, victim_line->ipc);
+    write_trace(n->write_trace_fp, "%lu [start] do_gc; force: %d, line: %d\n", nsec_now_mono(), force, victim_line->id);
     
     /* copy back valid data */
     for (ch = 0; ch < spp->nchs; ch++) {
@@ -900,6 +934,7 @@ static int do_gc(struct ssd *ssd, bool force)
 
     /* update line status */
     mark_line_free(ssd, &ppa);
+    write_trace(n->write_trace_fp, "%lu [end] do_gc\n", nsec_now_mono());
 
     return 0;
 }
@@ -940,7 +975,7 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     return maxlat;
 }
 
-static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
+static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req, FemuCtrl *n)
 {
     uint64_t lba = req->slba;
     struct ssdparams *spp = &ssd->sp;
@@ -967,10 +1002,12 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 
     while (should_gc_high(ssd)) {
         /* perform GC here until !should_gc(ssd) */
-        r = do_gc(ssd, true);
+        r = do_gc(ssd, true, n);
         if (r == -1)
             break;
     }
+
+    write_trace(n->write_trace_fp, "%lu [start] ssd_write; lba: %ld\n", nsec_now_mono(), start_lpn);
 
     // if (dtype != NVME_DIRECTIVE_DATA_PLACEMENT ||
     if (!nvme_parse_pid(ns, pid, &phid, &rgid)) {
@@ -1006,10 +1043,14 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         nvme_fdp_stat_inc(&ns->endgrp->fdp.mbmw, 1);
 
         /* need to advance the write pointer here */
+        struct line *prev_line = wp->curline;
         struct line *new_line = ssd_advance_write_pointer(ssd, wp);
+
         if (new_line != NULL) { //> allocate new RU
             new_line->ruh = ruh;
             new_line->gc = false;
+            objt_on_create(&ssd->trace_store, new_line->id, ruh->id, false);
+            objt_on_full(&ssd->trace_store, prev_line->id);
         }
 
         struct nand_cmd swr;
@@ -1022,6 +1063,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         maxlat = (curlat > maxlat) ? curlat : maxlat;
     }
 
+    write_trace(n->write_trace_fp, "%lu [end] ssd_write\n", nsec_now_mono());
     return maxlat;
 }
 
@@ -1055,7 +1097,7 @@ static void *ftl_thread(void *arg)
             ftl_assert(req);
             switch (req->cmd.opcode) {
             case NVME_CMD_WRITE:
-                lat = ssd_write(ssd, req);
+                lat = ssd_write(ssd, req, n);
                 break;
             case NVME_CMD_READ:
                 lat = ssd_read(ssd, req);
@@ -1078,10 +1120,11 @@ static void *ftl_thread(void *arg)
 
             /* clean one line if needed (in the background) */
             if (should_gc(ssd)) {
-                do_gc(ssd, false);
+                do_gc(ssd, false, n);
             }
         }
     }
 
+    fclose(n->write_trace_fp);
     return NULL;
 }

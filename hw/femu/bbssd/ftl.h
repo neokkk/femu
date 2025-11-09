@@ -2,6 +2,7 @@
 #define __FEMU_FTL_H
 
 #include "../nvme.h"
+#include "../util.h"
 
 #define INVALID_PPA     (~(0ULL))
 #define INVALID_LPN     (~(0ULL))
@@ -230,6 +231,7 @@ struct ssd {
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
     struct line_mgmt lm;
     struct write_pointer **gc_wpps; //> per RUH
+    int gc_count;
 
     NvmeEnduranceGroup *endgrp;
     NvmeNamespace *ns;
@@ -240,9 +242,12 @@ struct ssd {
     struct rte_ring **to_poller;
     bool *dataplane_started_ptr;
     QemuThread ftl_thread;
+
+    ObjTraceStore trace_store; //> nk
 };
 
 void ssd_init(FemuCtrl *n);
+void ssd_log(FemuCtrl *n);
 
 #ifdef FEMU_DEBUG_FTL
 #define ftl_debug(fmt, ...) \
