@@ -192,6 +192,10 @@ struct write_pointer {
     int pg;
     int blk;
     int pl;
+
+    int start_ch;
+    int start_lun;
+    uint64_t pos_in_line;
 };
 
 typedef struct ru_handle {
@@ -232,6 +236,7 @@ struct ssd {
     struct line_mgmt lm;
     struct write_pointer **gc_wpps; //> per RUH
     int gc_count;
+    int current_offset;
 
     NvmeEnduranceGroup *endgrp;
     NvmeNamespace *ns;

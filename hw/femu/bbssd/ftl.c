@@ -119,6 +119,7 @@ static void ssd_init_lines(struct ssd *ssd)
 
 static void ssd_init_write_pointer(struct ssd *ssd, struct write_pointer *wpp)
 {
+    struct ssdparams *spp = &ssd->sp;
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
 
@@ -130,11 +131,14 @@ static void ssd_init_write_pointer(struct ssd *ssd, struct write_pointer *wpp)
 
     /* wpp->curline is always our next-to-write super-block */
     wpp->curline = curline;
-    wpp->ch = 0;
-    wpp->lun = 0;
+    wpp->ch = wpp->start_ch = ssd->current_offset % spp->nchs;;
+    wpp->lun = wpp->start_lun = (ssd->current_offset / spp->nchs) % spp->luns_per_ch;
     wpp->pg = 0;
     wpp->blk = curline->id;
     wpp->pl = 0;
+    wpp->pos_in_line = 0;
+
+    ssd->current_offset = (ssd->current_offset + 1) % (spp->nchs * spp->luns_per_ch);
 }
 
 static void ssd_init_ruhs(struct ssd *ssd)
@@ -147,6 +151,7 @@ static void ssd_init_ruhs(struct ssd *ssd)
     printf("[FEMU] ssd_init_ruhs; nruh: %d\n", fspp->nruh);
     objt_store_init(&ssd->trace_store, fspp->tt_rus);
 
+    ssd->current_offset = 0;
     ssd->ruhs = g_malloc0(sizeof(struct ru_handle) * fspp->nruh);
     ssd->gc_wpps = g_malloc0(sizeof(struct write_pointer *) * fspp->nruh);
 
@@ -205,7 +210,7 @@ static struct line *get_next_free_line(struct ssd *ssd)
 {
     struct line_mgmt *lm = &ssd->lm;
     struct line *curline = NULL;
-
+   
     curline = QTAILQ_FIRST(&lm->free_line_list);
     if (!curline) {
         printf("[FEMU] no free lines left\n");
@@ -226,66 +231,65 @@ static line *ssd_advance_write_pointer(struct ssd *ssd, struct write_pointer *wp
 {
     struct ssdparams *spp = &ssd->sp;
     struct line_mgmt *lm = &ssd->lm;
+    const uint64_t NCHS   = (uint64_t)spp->nchs;
+    const uint64_t NLUNS  = (uint64_t)spp->luns_per_ch;
+    const uint64_t NPGS   = (uint64_t)spp->pgs_per_blk;
+    const uint64_t SUPER  = NCHS * NLUNS;         // 한 페이지(=superpage)당 채널×웨이 포지션 수
+    const uint64_t TOTAL_POS = SUPER * NPGS;      // 라인 전체 포지션 수
 
     // printf("[FEMU] ssd_advance_write_pointer; line: %d, gc: %d, ch: %d, lun: %d, blk: %d, pg: %d\n",
     //        wpp->curline->id, gc, wpp->ch, wpp->lun, wpp->blk, wpp->pg);
 
     check_addr(wpp->ch, spp->nchs);
-    wpp->ch++;
+    wpp->pos_in_line++;
 
-    if (wpp->ch == spp->nchs) {
-        wpp->ch = 0;
-        check_addr(wpp->lun, spp->luns_per_ch);
-        wpp->lun++;
+    if (wpp->pos_in_line == TOTAL_POS) {
+        // ---- 라인 종료: 라인 상태 이동 및 새 라인 선택 ----
+        wpp->pos_in_line = 0;
 
-        /* in this case, we should go to next lun */
-        if (wpp->lun == spp->luns_per_ch) {
-            wpp->lun = 0;
-            /* go to next page in the block */
-            check_addr(wpp->pg, spp->pgs_per_blk);
-            wpp->pg++;
-
-            if (wpp->pg == spp->pgs_per_blk) {
-                wpp->pg = 0;
-                /* move current line to {victim,full} line list */
-                if (wpp->curline->vpc == spp->pgs_per_line) {
-                    /* all pgs are still valid, move to full line list */
-                    ftl_assert(wpp->curline->ipc == 0);
-                    QTAILQ_INSERT_TAIL(&lm->full_line_list, wpp->curline, entry);
-                    lm->full_line_cnt++;
-                } else {
-                    ftl_assert(wpp->curline->vpc >= 0 && wpp->curline->vpc < spp->pgs_per_line);
-                    /* there must be some invalid pages in this line */
-                    ftl_assert(wpp->curline->ipc > 0);
-                    pqueue_insert(lm->victim_line_pq, wpp->curline);
-                    lm->victim_line_cnt++;
-                }
-
-                /* current line is used up, pick another empty line */
-                check_addr(wpp->blk, spp->blks_per_pl);
-                /* current line is used up, pick another empty line */
-                wpp->curline = NULL;
-                wpp->curline = get_next_free_line(ssd);
-                if (!wpp->curline) {
-                    /* TODO */
-                    abort();
-                    return NULL;
-                }
-                wpp->blk = wpp->curline->id;
-
-                check_addr(wpp->blk, spp->blks_per_pl);
-                /* make sure we are starting from page 0 in the super block */
-                ftl_assert(wpp->pg == 0);
-                ftl_assert(wpp->lun == 0);
-                ftl_assert(wpp->ch == 0);
-                /* TODO: assume # of pl_per_lun is 1, fix later */
-                ftl_assert(wpp->pl == 0);
-
-                return wpp->curline;
-            }
+        if (wpp->curline->vpc == spp->pgs_per_line) {
+            ftl_assert(wpp->curline->ipc == 0);
+            QTAILQ_INSERT_TAIL(&lm->full_line_list, wpp->curline, entry);
+            lm->full_line_cnt++;
+        } else {
+            ftl_assert(wpp->curline->vpc >= 0 &&
+                       wpp->curline->vpc < spp->pgs_per_line);
+            ftl_assert(wpp->curline->ipc > 0);
+            pqueue_insert(lm->victim_line_pq, wpp->curline);
+            lm->victim_line_cnt++;
         }
+
+        // 새 라인 선택
+        wpp->curline = get_next_free_line(ssd);
+        if (!wpp->curline) {
+            fprintf(stderr, "No free line available!\n");
+            abort();
+            return NULL;
+        }
+        wpp->blk = wpp->curline->id;
+
+        // 새 라인은 항상 시작 오프셋에서 시작
+        wpp->pg  = 0;
+        wpp->pl  = 0; // plane 1개 가정
+        wpp->ch  = wpp->start_ch;
+        wpp->lun = wpp->start_lun;
+
+        return wpp->curline; // 라인 교체 알림
     }
-    return NULL;
+
+    // ---- 현재 pos_in_line을 (ch, lun, pg)로 복원 ----
+    uint64_t idx     = wpp->pos_in_line;       // 1..TOTAL_POS-1 범위
+    uint64_t pg      = idx / SUPER;            // 0..NPGS-1
+    uint64_t within  = idx % SUPER;            // 0..SUPER-1
+
+    uint64_t lun_off = within / NCHS;        // 0..NLUNS-1
+    uint64_t ch_off  = within % NCHS;        // 0..NCHS-1
+
+    wpp->pg  = (int)pg;
+    wpp->ch  = (wpp->start_ch  + (int)ch_off)  % spp->nchs;
+    wpp->lun = (wpp->start_lun + (int)lun_off) % spp->luns_per_ch;
+
+    return NULL; // 같은 라인 계속 사용
 }
 
 static struct ppa get_new_page(struct ssd *ssd, struct write_pointer *wpp)
@@ -587,10 +591,10 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
         nand_cmd *ncmd)
 {
     int c = ncmd->cmd;
-    uint64_t cmd_stime = (ncmd->stime == 0) ? \
-        qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : ncmd->stime;
-    uint64_t nand_stime;
+    uint64_t cmd_stime = (ncmd->stime == 0) ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : ncmd->stime;
+    uint64_t nand_stime, chnl_stime;
     struct ssdparams *spp = &ssd->sp;
+    struct ssd_channel *ch = get_ch(ssd, ppa);
     struct nand_lun *lun = get_lun(ssd, ppa);
     uint64_t lat = 0;
 
@@ -601,7 +605,7 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
                      lun->next_lun_avail_time;
         lun->next_lun_avail_time = nand_stime + spp->pg_rd_lat;
         lat = lun->next_lun_avail_time - cmd_stime;
-#if 0
+// #if 0
         lun->next_lun_avail_time = nand_stime + spp->pg_rd_lat;
 
         /* read: then data transfer through channel */
@@ -610,11 +614,12 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
         ch->next_ch_avail_time = chnl_stime + spp->ch_xfer_lat;
 
         lat = ch->next_ch_avail_time - cmd_stime;
-#endif
+// #endif
         break;
 
     case NAND_WRITE:
         /* write: transfer data through channel first */
+#if 0
         nand_stime = (lun->next_lun_avail_time < cmd_stime) ? cmd_stime : \
                      lun->next_lun_avail_time;
         if (ncmd->type == USER_IO) {
@@ -623,8 +628,9 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
             lun->next_lun_avail_time = nand_stime + spp->pg_wr_lat;
         }
         lat = lun->next_lun_avail_time - cmd_stime;
+#endif
 
-#if 0
+// #if 0
         chnl_stime = (ch->next_ch_avail_time < cmd_stime) ? cmd_stime : \
                      ch->next_ch_avail_time;
         ch->next_ch_avail_time = chnl_stime + spp->ch_xfer_lat;
@@ -635,7 +641,7 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
         lun->next_lun_avail_time = nand_stime + spp->pg_wr_lat;
 
         lat = lun->next_lun_avail_time - cmd_stime;
-#endif
+// #endif
         break;
 
     case NAND_ERASE:
@@ -906,8 +912,8 @@ static int do_gc(struct ssd *ssd, bool force, FemuCtrl *n)
 
     ppa.g.blk = victim_line->id;
 
-    printf("do_gc (force: %d); line: %d, count: %d, vpc: %d, ipc: %d\n",
-           force, ppa.g.blk, ++ssd->gc_count, victim_line->vpc, victim_line->ipc);
+    printf("do_gc (force: %d); line: %d, ruhid: %d, count: %d, vpc: %d, ipc: %d\n",
+           force, ppa.g.blk, victim_line->ruh->id, ++ssd->gc_count, victim_line->vpc, victim_line->ipc);
     write_trace(n->write_trace_fp, "%lu [start] do_gc; force: %d, line: %d\n", nsec_now_mono(), force, victim_line->id);
     
     /* copy back valid data */

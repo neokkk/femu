@@ -384,6 +384,8 @@ static uint16_t nvme_io_mgmt_recv_ruhs(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *
             ruhsd->ruhid = *ruhid;
             ruhsd->earutr = 0;
             ruhsd->ruamw = cpu_to_le64(ruh->rus[rg].ruamw);
+
+            printf("[FEMU] nvme_io_mgmt_recv_ruhs; rgid: %d, phid: %d, ruhid: %d\n", rg, ph, *ruhid);
         }
     }
 

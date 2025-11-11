@@ -135,7 +135,7 @@ static inline void objt_dump_csv(const ObjTraceStore *st, FILE *fp)
         double c2f_ms = (tr->t_full_ns     ? (double)(tr->t_full_ns     - tr->t_create_ns)/1e6 : 0.0);
         double f2r_ms = (tr->t_full_ns && tr->t_reclaim_ns) ? (double)(tr->t_reclaim_ns - tr->t_full_ns)/1e6 : 0.0;
         double life_ms= (tr->t_reclaim_ns  ? (double)(tr->t_reclaim_ns  - tr->t_create_ns)/1e6 : 0.0);
-        fprintf(fp, "%" PRId64 "%d,%" PRIu32 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.3f,%.3f,%.3f,%d\n",
+        fprintf(fp, "%" PRId64 ",%d,%" PRIu32 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.3f,%.3f,%.3f,%d\n",
                 tr->id, tr->ruhid, tr->valid_pgs, tr->t_create_ns, tr->t_full_ns, tr->t_reclaim_ns, tr->t_wall_create_ns,
                 c2f_ms, f2r_ms, life_ms, tr->gc);
     }
