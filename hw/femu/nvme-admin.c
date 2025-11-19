@@ -235,6 +235,8 @@ static void nvme_init_poller(FemuCtrl *n)
 {
     int i;
 
+    printf("[FEMU] nvme_init_poller\n");
+
     n->should_isr = g_malloc0(sizeof(bool) * (n->nr_io_queues + 1));
 
     n->nr_pollers = n->multipoller_enabled ? n->nr_io_queues : 1;
@@ -277,6 +279,7 @@ static void nvme_init_poller(FemuCtrl *n)
         args[i].index = i;
         qemu_thread_create(&n->poller[i], "femu-nvme-poller", nvme_poller,
                 &args[i], QEMU_THREAD_JOINABLE);
+        qemu_thread_naming(true); //> nk
         femu_debug("femu-nvme-poller [%d] created ...\n", i - 1);
     }
 }

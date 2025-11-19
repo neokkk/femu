@@ -16,6 +16,7 @@
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
+#include "qemu/thread.h"
 #include "sysemu/kvm.h"
 #include "sysemu/kvm_int.h"
 #include "sysemu/runstate.h"
@@ -69,10 +70,12 @@ static void kvm_start_vcpu_thread(CPUState *cpu)
     cpu->thread = g_malloc0(sizeof(QemuThread));
     cpu->halt_cond = g_malloc0(sizeof(QemuCond));
     qemu_cond_init(cpu->halt_cond);
+    printf("kvm_start_vcpu_thread %d\n", cpu->cpu_index);
     snprintf(thread_name, VCPU_THREAD_NAME_SIZE, "CPU %d/KVM",
              cpu->cpu_index);
     qemu_thread_create(cpu->thread, thread_name, kvm_vcpu_thread_fn,
                        cpu, QEMU_THREAD_JOINABLE);
+    qemu_thread_naming(true); //> nk
 }
 
 static bool kvm_vcpu_thread_is_idle(CPUState *cpu)

@@ -127,18 +127,21 @@ static void ssd_init_write_pointer(struct ssd *ssd, struct write_pointer *wpp)
     QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
     lm->free_line_cnt--;
 
-    printf("[FEMU] ssd_init_write_pointer; new line %d\n", curline->id);
-
     /* wpp->curline is always our next-to-write super-block */
     wpp->curline = curline;
-    wpp->ch = wpp->start_ch = ssd->current_offset % spp->nchs;;
-    wpp->lun = wpp->start_lun = (ssd->current_offset / spp->nchs) % spp->luns_per_ch;
+    wpp->ch = wpp->start_ch = 0;
+    wpp->lun = wpp->start_lun = 0;
+    // wpp->ch = wpp->start_ch = ssd->current_offset % spp->nchs;
+    // wpp->lun = wpp->start_lun = (ssd->current_offset / spp->nchs) % spp->luns_per_ch;
     wpp->pg = 0;
     wpp->blk = curline->id;
     wpp->pl = 0;
     wpp->pos_in_line = 0;
 
     ssd->current_offset = (ssd->current_offset + 1) % (spp->nchs * spp->luns_per_ch);
+
+    printf("[FEMU] ssd_init_write_pointer; line %d, start_ch: %d, start_lun: %d\n",
+           curline->id, wpp->start_ch, wpp->start_lun);
 }
 
 static void ssd_init_ruhs(struct ssd *ssd)
@@ -237,8 +240,8 @@ static line *ssd_advance_write_pointer(struct ssd *ssd, struct write_pointer *wp
     const uint64_t SUPER  = NCHS * NLUNS;         // 한 페이지(=superpage)당 채널×웨이 포지션 수
     const uint64_t TOTAL_POS = SUPER * NPGS;      // 라인 전체 포지션 수
 
-    // printf("[FEMU] ssd_advance_write_pointer; line: %d, gc: %d, ch: %d, lun: %d, blk: %d, pg: %d\n",
-    //        wpp->curline->id, gc, wpp->ch, wpp->lun, wpp->blk, wpp->pg);
+    // printf("[FEMU] ssd_advance_write_pointer; line: %d, ruhid: %d, gc: %d, ch: %d, lun: %d, blk: %d, pg: %d\n",
+    //        wpp->curline->id, wpp->curline->ruh->id, wpp->curline->gc, wpp->ch, wpp->lun, wpp->blk, wpp->pg);
 
     check_addr(wpp->ch, spp->nchs);
     wpp->pos_in_line++;
@@ -273,6 +276,10 @@ static line *ssd_advance_write_pointer(struct ssd *ssd, struct write_pointer *wp
         wpp->pl  = 0; // plane 1개 가정
         wpp->ch  = wpp->start_ch;
         wpp->lun = wpp->start_lun;
+        wpp->pos_in_line = 0;
+        
+        // printf("[FEMU] ssd_advance_write_pointer; new line %d, start_ch: %d, start_lun: %d\n",
+        //        wpp->curline->id, wpp->start_ch, wpp->start_lun);
 
         return wpp->curline; // 라인 교체 알림
     }
@@ -505,7 +512,7 @@ void ssd_init(FemuCtrl *n)
 
     /* initialize write pointer, this is how we allocate new pages for writes */
 
-    qemu_thread_create(&ssd->ftl_thread, "FEMU-FTL-Thread", ftl_thread, n,
+    qemu_thread_create(&ssd->ftl_thread, "femu-ftl-thread", ftl_thread, n,
                        QEMU_THREAD_JOINABLE);
 }
 
@@ -587,11 +594,12 @@ static inline struct nand_page *get_pg(struct ssd *ssd, struct ppa *ppa)
     return &(blk->pg[ppa->g.pg]);
 }
 
+static int count = 0;
 static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
         nand_cmd *ncmd)
 {
     int c = ncmd->cmd;
-    uint64_t cmd_stime = (ncmd->stime == 0) ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : ncmd->stime;
+    uint64_t cmd_stime = (ncmd->stime == 0) ? qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) : ncmd->stime;
     uint64_t nand_stime, chnl_stime;
     struct ssdparams *spp = &ssd->sp;
     struct ssd_channel *ch = get_ch(ssd, ppa);
@@ -641,6 +649,11 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
         lun->next_lun_avail_time = nand_stime + spp->pg_wr_lat;
 
         lat = lun->next_lun_avail_time - cmd_stime;
+
+        if (count++ < 1024) {
+            printf("lat: %ld, next_ch_avail_time: %ld, next_lun_avail_time: %ld\n",
+                   lat, ch->next_ch_avail_time, lun->next_lun_avail_time);
+        }
 // #endif
         break;
 
@@ -912,9 +925,10 @@ static int do_gc(struct ssd *ssd, bool force, FemuCtrl *n)
 
     ppa.g.blk = victim_line->id;
 
-    printf("do_gc (force: %d); line: %d, ruhid: %d, count: %d, vpc: %d, ipc: %d\n",
-           force, ppa.g.blk, victim_line->ruh->id, ++ssd->gc_count, victim_line->vpc, victim_line->ipc);
-    write_trace(n->write_trace_fp, "%lu [start] do_gc; force: %d, line: %d\n", nsec_now_mono(), force, victim_line->id);
+    printf("do_gc (force: %d); line: %d (gc: %d), ruhid: %d, count: %d, vpc: %d, ipc: %d\n",
+           force, victim_line->id, victim_line->gc, victim_line->ruh->id, ++ssd->gc_count, victim_line->vpc, victim_line->ipc);
+    // write_trace(n->write_trace_fp, "%lu [start] do_gc; force: %d, line: %d, gc: %d, ruhid: %d\n",
+    //             nsec_now_mono(), force, victim_line->id, victim_line->gc, victim_line->ruh->id);
     
     /* copy back valid data */
     for (ch = 0; ch < spp->nchs; ch++) {
@@ -940,7 +954,7 @@ static int do_gc(struct ssd *ssd, bool force, FemuCtrl *n)
 
     /* update line status */
     mark_line_free(ssd, &ppa);
-    write_trace(n->write_trace_fp, "%lu [end] do_gc\n", nsec_now_mono());
+    // write_trace(n->write_trace_fp, "%lu [end] do_gc\n", nsec_now_mono());
 
     return 0;
 }
@@ -1013,8 +1027,6 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req, FemuCtrl *n)
             break;
     }
 
-    write_trace(n->write_trace_fp, "%lu [start] ssd_write; lba: %ld\n", nsec_now_mono(), start_lpn);
-
     // if (dtype != NVME_DIRECTIVE_DATA_PLACEMENT ||
     if (!nvme_parse_pid(ns, pid, &phid, &rgid)) {
         printf("fail to parse pid\n");
@@ -1026,6 +1038,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req, FemuCtrl *n)
     ruh = &ssd->ruhs[ruhid];
     wp = &ruh->wps[rgid];
 
+    // write_trace(n->write_trace_fp, "%lu [start] ssd_write; lba: %ld, ruhid: %d\n", nsec_now_mono(), start_lpn, ruhid);
     // printf("[FEMU] ssd_write; slba: %"PRIu64", nlb: %d, phid: %d, rgid: %d\n", lba, len, phid, rgid);
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
         ppa = get_maptbl_ent(ssd, lpn);
@@ -1069,7 +1082,8 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req, FemuCtrl *n)
         maxlat = (curlat > maxlat) ? curlat : maxlat;
     }
 
-    write_trace(n->write_trace_fp, "%lu [end] ssd_write\n", nsec_now_mono());
+    // write_trace(n->write_trace_fp, "%lu [end] ssd_write\n", nsec_now_mono());
+    // printf("%lld\n", maxlat);
     return maxlat;
 }
 
