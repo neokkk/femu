@@ -158,8 +158,7 @@ static void ssd_init_rus(struct ssd *ssd)
         
         // Line 할당
         for (int j = 0; j < fspp->lines_per_ru; j++) {
-            ru->lines[j] = get_next_free_line(ssd);
-            ru->lines[j]->ru = ru;  // 역참조 추가
+            ru->lines[j] = NULL;
         }
         ru->cur_line_idx = 0;
         
@@ -182,7 +181,7 @@ static struct ru *get_next_free_ru(struct ssd *ssd)
    
     cur_ru = QTAILQ_FIRST(&rm->free_ru_list);
     if (!cur_ru) {
-        printf("[FEMU] No free RUs left\n");
+        printf("[FEMU] No free rus left\n");
         return NULL;
     }
 
@@ -469,7 +468,8 @@ static void ssd_init_fdp_params(struct ssd *ssd, FemuCtrl *n)
     ftl_assert(fspp->runs >= line_sz);
     ftl_assert(fspp->runs % line_sz == 0);
 
-    fspp->tt_rus = spp->secsz * spp->tt_secs / fspp->runs;
+    fspp->tt_rus = (uint64_t)spp->secsz * spp->tt_secs / fspp->runs;
+    fspp->rus_per_rg = fspp->tt_rus / fspp->nrg;
     fspp->lines_per_ru = fspp->runs / line_sz;
     fspp->pgs_per_ru = spp->pgs_per_line * fspp->lines_per_ru;
 
@@ -484,8 +484,10 @@ static void ssd_init_fdp_params(struct ssd *ssd, FemuCtrl *n)
         fspp->ruh_types[i] = endgrp->fdp.ruhs[i].ruht;
     }
 
-    printf("[FEMU] ssd_init_fdp_params; nruh: %d, tt_sz: %lu, tt_rus: %d, pgs_per_ru: %d, lines_per_ru: %d, ruamw: %lu, line_sz: %lu\n",
-           fspp->nruh, (uint64_t)spp->tt_secs * spp->secsz, fspp->tt_rus, fspp->pgs_per_ru, fspp->lines_per_ru, fspp->ruamw, line_sz);
+    printf("[FEMU] ssd_init_fdp_params; nruh: %d, tt_sz: %lu, tt_rus: %d, pgs_per_ru: %d,\n"
+           "lines_per_ru: %d, ruamw: %lu, line_sz: %lu, gc_thres_rus: %d, gc_thres_rus_high: %d\n",
+           fspp->nruh, (uint64_t)spp->tt_secs * spp->secsz, fspp->tt_rus,fspp->pgs_per_ru,
+           fspp->lines_per_ru, fspp->ruamw, line_sz, fspp->gc_thres_rus, fspp->gc_thres_rus_high);
 }
 
 static void ssd_init_nand_page(struct nand_page *pg, struct ssdparams *spp)
@@ -762,7 +764,6 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa, struct
 static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
 {
     struct ru_mgmt *rm = &ssd->rm;
-    struct ssdparams *spp = &ssd->sp;
     struct fdp_ssdparams *fspp = &ssd->fsp;
     struct nand_block *blk = NULL;
     struct nand_page *pg = NULL;
