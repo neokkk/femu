@@ -153,6 +153,7 @@ struct ssdparams {
     int pgs_per_line;
     int blks_per_line;
     int tt_lines;
+    uint64_t line_sz;
 
     int pls_per_ch;   /* # of planes per channel */
     int tt_pls;       /* total # of planes in the SSD */
@@ -212,7 +213,6 @@ typedef struct ru {
     struct ru_handle *ruh;
 
     struct line **lines;
-    uint16_t tt_rus;
     int cur_line_idx;
 
     int tt_vpc;
@@ -237,12 +237,7 @@ struct line_mgmt {
     int tt_lines;
 
     QTAILQ_HEAD(free_line_list, line) free_line_list;
-    // pqueue_t *victim_line_pq;
-    // QTAILQ_HEAD(full_line_list, line) full_line_list;
-
     int free_line_cnt;
-    // int victim_line_cnt;
-    // int full_line_cnt;
 };
 
 struct ru_mgmt {
